@@ -2,7 +2,7 @@
     "KPackageStructure": "Plasma/Applet",
     "KPlugin": {
         "Id": "org.kde.hotspot",
-        "Name": "KDE Hotspot Control",
+        "Name": "Plasma Hotspot Control",
         "Name[zh_CN]": "Wi-Fi 热点控制",
         "Description": "Toggle concurrent/normal Wi-Fi hotspot, shows band and channel, with dependency self-check and autostart",
         "Description[zh_CN]": "开关并发热点/普通热点，显示频段与信道，含依赖自检与开机自启",

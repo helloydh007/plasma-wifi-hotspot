@@ -1,4 +1,4 @@
-# KDE 热点控制（KDE Hotspot Control）
+# Plasma Wi-Fi 热点控制（Plasma Wi-Fi Hotspot Control）
 
 Plasma 6 系统托盘插件 + 后端服务，用来一键开关 Wi-Fi 热点，并支持两种截然不同的模式。
 
@@ -80,7 +80,7 @@ sudo apt install hostapd dnsmasq iw iptables
 
 ```bash
 sudo apt install hostapd dnsmasq iw iptables    # 缺哪个装哪个
-git clone <此仓库> && cd kde-hotspot-control
+git clone <此仓库> && cd plasma-wifi-hotspot
 bash install.sh
 ```
 

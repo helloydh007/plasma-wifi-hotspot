@@ -1,4 +1,4 @@
-# KDE Hotspot Control
+# Plasma Wi-Fi Hotspot Control
 
 A Plasma 6 system-tray applet + privileged backend to switch a Wi-Fi hotspot on/off with one click, in two distinctly different modes.
 
@@ -59,7 +59,7 @@ This also explains why Windows can do "Wi-Fi + hotspot at once": its Mobile Hots
 
 ```bash
 sudo apt install hostapd dnsmasq iw iptables   # only what's missing
-git clone <this repo> && cd kde-hotspot-control
+git clone <this repo> && cd plasma-wifi-hotspot
 bash install.sh
 ```
 
