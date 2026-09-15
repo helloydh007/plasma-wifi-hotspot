@@ -21,10 +21,23 @@ QQC2.ScrollView {
             Layout.margins: Kirigami.Units.smallSpacing
             spacing: Kirigami.Units.smallSpacing
 
-            Kirigami.Icon {
-                source: Plasmoid.icon
+            // 与托盘一致：热点图标，关闭时叠红色 ✕
+            Item {
                 implicitWidth: Kirigami.Units.iconSizes.medium
                 implicitHeight: Kirigami.Units.iconSizes.medium
+                Kirigami.Icon {
+                    anchors.fill: parent
+                    source: root.baseIcon
+                    opacity: root.offBadge ? 0.4 : 1.0
+                }
+                Kirigami.Icon {
+                    visible: root.offBadge
+                    source: "data-error"
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    implicitWidth: Math.round(parent.width * 0.55)
+                    implicitHeight: Math.round(parent.height * 0.55)
+                }
             }
             ColumnLayout {
                 spacing: 0
@@ -99,7 +112,7 @@ QQC2.ScrollView {
             Layout.rightMargin: Kirigami.Units.smallSpacing
             enabled: !root.busy && root.ready
             text: root.busy ? "执行中…" : ((root.isOff || !root.hotRunning) ? "开启热点" : "关闭热点")
-            icon.name: (root.isOff || !root.hotRunning) ? "network-wireless-hotspot" : "network-wireless-disconnected"
+            icon.name: (root.isOff || !root.hotRunning) ? "network-wireless-hotspot" : "dialog-cancel"
             onClicked: root.toggleHotspot()
         }
 

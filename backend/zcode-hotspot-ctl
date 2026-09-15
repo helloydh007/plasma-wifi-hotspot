@@ -13,11 +13,14 @@
 #   concurrent  并发模式: hostapd + 虚拟 ap0，Wi-Fi 客户端保持连接（受限于同信道）
 #   normal      普通模式: NetworkManager 原生热点，同一网卡切 AP，Wi-Fi 客户端必须断开
 set -u
+# 状态/备份文件一律收紧（band.backup 等虽无密码，保持一致的最小权限）
+umask 077
 
 CONF=/etc/zcode-hotspot/config
 STATE=/var/lib/zcode-hotspot
 DISABLED="$STATE/disabled"
 BANDBACKUP="$STATE/band.backup"
+CONNBACKUP="$STATE/band.conn"
 STABACKUP="$STATE/sta-conn.backup"
 NM_AP_CON=zcode-hotspot-normal
 UNIT_MAIN=zcode-hotspot.service
@@ -82,18 +85,30 @@ sta_band(){
 force_band_2g(){
     local c; c=$(sta_conn) || true
     [ -n "${c:-}" ] || { log "当前没有活动的 Wi-Fi 连接，跳过频段切换"; return 0; }
-    [ -e "$BANDBACKUP" ] || sta_band > "$BANDBACKUP"
+    if [ ! -e "$BANDBACKUP" ]; then
+        sta_band > "$BANDBACKUP"
+        # 记住是哪个连接的偏好：恢复时该连接可能已不是活动连接
+        echo "$c" > "$CONNBACKUP"
+    fi
     $NMCLI connection modify "$c" 802-11-wireless.band bg >/dev/null 2>&1 || true
     $NMCLI connection up "$c" >/dev/null 2>&1 || true
     log "已把 '$c' 切到 2.4GHz"
 }
 restore_band(){
     [ -e "$BANDBACKUP" ] || return 0
-    local c v; c=$(sta_conn); v=$(cat "$BANDBACKUP" 2>/dev/null); rm -f "$BANDBACKUP"
-    [ -n "${c:-}" ] || return 0
-    $NMCLI connection modify "$c" 802-11-wireless.band "$v" >/dev/null 2>&1 || true
-    $NMCLI connection up "$c" >/dev/null 2>&1 || true
-    log "已恢复 '$c' 的频段偏好（${v:-自动}）"
+    local c v
+    # 优先用备份时记录的连接名；恢复时 Wi-Fi 可能恰好断了
+    c=$(cat "$CONNBACKUP" 2>/dev/null)
+    [ -n "${c:-}" ] || c=$(sta_conn)
+    v=$(cat "$BANDBACKUP" 2>/dev/null)
+    rm -f "$BANDBACKUP" "$CONNBACKUP"
+    if [ -n "${c:-}" ]; then
+        $NMCLI connection modify "$c" 802-11-wireless.band "$v" >/dev/null 2>&1 || true
+        $NMCLI connection up "$c" >/dev/null 2>&1 || true
+        log "已恢复 '$c' 的频段偏好（${v:-自动}）"
+    else
+        log "频段备份已清理（找不到原连接 '$c'，无法恢复）"
+    fi
 }
 
 # ---------- on / off ----------
@@ -132,6 +147,12 @@ do_on(){
         stop_normal
         force_band_2g
         systemctl start "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
+        sleep 1
+        if ! systemctl is-active --quiet "$UNIT_MAIN"; then
+            log "并发模式服务启动失败，见 journalctl -u zcode-hotspot"
+            result false "服务启动失败，见 journalctl -u zcode-hotspot"
+            return 1
+        fi
         log "并发模式已开启（热点将跟随 Wi-Fi 信道在 2.4GHz 起信标）"
         result true "已开启：热点将以 2.4GHz 同信道发信标（SSID=$SSID）"
         ;;
@@ -218,14 +239,14 @@ set_credentials(){
     fi
     local tmp; tmp=$(mktemp) || { result false "无法创建临时文件"; return 1; }
     cp -a "$CONF" "$tmp" 2>/dev/null || true
-    # 用 awk 重写整行，任意字符（除换行）都安全
-    awk -v s="$ssid" -v p="$pass" '
-        /^SSID=/ { print "SSID=" s; done_ssid=1; next }
-        /^PASS=/ { if (p != "") print "PASS=" p; done_pass=1; next }
+    # 用 awk 重写整行；值经环境变量传入（-v 会解释反斜杠转义，密码含 \ 时会被改写）
+    ZK_SSID="$ssid" ZK_PASS="$pass" awk '
+        /^SSID=/ { print "SSID=" ENVIRON["ZK_SSID"]; done_ssid=1; next }
+        /^PASS=/ { if (ENVIRON["ZK_PASS"] != "") print "PASS=" ENVIRON["ZK_PASS"]; done_pass=1; next }
         { print }
         END {
-            if (!done_ssid) print "SSID=" s
-            if (p != "" && !done_pass) print "PASS=" p
+            if (!done_ssid) print "SSID=" ENVIRON["ZK_SSID"]
+            if (ENVIRON["ZK_PASS"] != "" && !done_pass) print "PASS=" ENVIRON["ZK_PASS"]
         }' "$CONF" > "$tmp" 2>/dev/null || { rm -f "$tmp"; result false "写入配置失败"; return 1; }
     install -m 600 -o root -g root "$tmp" "$CONF"
     rm -f "$tmp"

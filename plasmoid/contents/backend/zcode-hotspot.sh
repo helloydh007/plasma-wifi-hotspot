@@ -12,6 +12,8 @@
 #  - /var/lib/zcode-hotspot/disabled 存在  → 不启动热点（"保持关闭"）
 #  - /etc/zcode-hotspot/config 里 MODE=normal → 本脚本让位（普通模式由 NetworkManager 负责）
 set -u
+# hostapd.conf 里有密码，默认权限收紧到 600
+umask 077
 CONF=/etc/zcode-hotspot/config
 [ -r "$CONF" ] && . "$CONF"
 STA_IF=${STA_IF:-wlp0s20f3}
@@ -99,22 +101,26 @@ while :; do
     $IW reg set CN
     ensure_ap0 || { sleep 10; continue; }
 
-    cat > "$RUN/hostapd.conf" <<EOF
-interface=$AP_IF
-driver=nl80211
-ssid=$SSID
-country_code=CN
-ieee80211d=1
-hw_mode=g
-channel=$CH
-wpa=2
-wpa_passphrase=$PASS
-wpa_key_mgmt=WPA-PSK
-rsn_pairwise=CCMP
-ieee80211n=1
-wmm_enabled=1
-ht_capab=[SHORT-GI-20]
-EOF
+    # 用 printf 生成配置：heredoc 会对 $SSID/$PASS 做变量展开和转义处理，
+    # 名称/密码里含 $ ` \ 等字符时会被写坏
+    {
+        printf 'interface=%s\n' "$AP_IF"
+        printf 'driver=nl80211\n'
+        printf 'ssid=%s\n' "$SSID"
+        printf 'country_code=CN\n'
+        printf 'ieee80211d=1\n'
+        printf 'hw_mode=g\n'
+        printf 'channel=%s\n' "$CH"
+        printf 'wpa=2\n'
+        printf 'wpa_passphrase=%s\n' "$PASS"
+        printf 'wpa_key_mgmt=WPA-PSK\n'
+        printf 'rsn_pairwise=CCMP\n'
+        printf 'ieee80211n=1\n'
+        printf 'wmm_enabled=1\n'
+        printf 'ht_capab=[SHORT-GI-20]\n'
+    } > "$RUN/hostapd.conf"
+    # 旧文件可能是宽松权限遗留的（umask 只管新建），补一次显式收紧
+    chmod 600 "$RUN/hostapd.conf"
 
     # ---- 阶段2：跑热点，同时盯着 STA 是否仍在同一信道 ----
     log "启动 hostapd: $SSID @ ch$CH (网关 $AP_IP)"

@@ -29,11 +29,25 @@ MouseArea {
         anchors.centerIn: parent
         spacing: Kirigami.Units.smallSpacing
 
-        Kirigami.Icon {
-            source: Plasmoid.icon
-            active: compact.containsMouse
+        // 热点图标 + 关闭时的红色 ✕ 徽标（托盘格子小，徽标画在图标右下角）
+        Item {
             implicitWidth: compact.iconSize
             implicitHeight: compact.iconSize
+
+            Kirigami.Icon {
+                anchors.fill: parent
+                source: root.baseIcon
+                active: compact.containsMouse
+                opacity: root.offBadge ? 0.4 : 1.0
+            }
+            Kirigami.Icon {
+                visible: root.offBadge
+                source: "data-error"
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                implicitWidth: Math.round(parent.width * 0.55)
+                implicitHeight: Math.round(parent.height * 0.55)
+            }
         }
 
         // 只在非受限场景（比如放到面板上而非托盘里）显示文字

@@ -55,8 +55,11 @@ PlasmoidItem {
     }
     readonly property string backendDir: Qt.resolvedUrl("../backend/deploy.sh").toString().replace("file://", "")
 
-    // 用热点图标而不是普通无线图标，避免和官方网络图标混淆
-    Plasmoid.icon: (!ready || isOff) ? "network-wireless-disconnected" : "network-wireless-hotspot"
+    // 图标统一用热点图标；关闭/后端不可用时在右下角叠红色 ✕ 徽标
+    // （不用 network-wireless-disconnected——那是"WiFi+叉"，容易和断网混淆）
+    readonly property string baseIcon: "network-wireless-hotspot"
+    readonly property bool offBadge: !ready || isOff
+    Plasmoid.icon: root.baseIcon
     Plasmoid.title: "Wi-Fi 热点控制"
     Plasmoid.status: PlasmaCore.Types.ActiveStatus
     // 托盘里只显示图标，所以把频段/信道放进悬浮提示
@@ -90,17 +93,33 @@ PlasmoidItem {
         + "then echo OK polkit-免密授权; else echo MISS polkit-免密授权; fi'"
 
     // ---------- 数据源 ----------
+    // executable 引擎的关键行为：对已连接过的 source 名，reconnect 只回放缓存、
+    // 不会重新执行命令（曾经导致托盘状态永不更新）。因此：
+    //  - 周期刷新用引擎自带的 interval 轮询同一个 source；
+    //  - 手动立即刷新/一次性查询追加 "# 序号" 构造唯一 source 强制真正执行，
+    //    拿到结果后立即断开。
+    property int oneShotSeq: 0
+
+    // pollInterval 可能取不到默认值（undefined→NaN），显式兜底
+    readonly property int pollInterval: {
+        var p = Number(Plasmoid.configuration.pollInterval)
+        if (!isFinite(p) || p < 2) { p = 5 }
+        return p
+    }
+
     P5Support.DataSource {
         id: statusSource
         engine: "executable"
         connectedSources: [root.statusCmd]
+        interval: root.pollInterval
         onNewData: (sourceName, data) => {
-            if (sourceName !== root.statusCmd) { return }
             if (data.stdout && data.stdout.length > 0) {
                 try { root.st = JSON.parse(data.stdout) }
                 catch (e) { root.st = ({}) }
-            } else {
-                root.st = ({})
+            }
+            // 一次性查询用完即断；固定 source 留给 interval 轮询
+            if (sourceName !== root.statusCmd) {
+                Qt.callLater(() => { statusSource.disconnectSource(sourceName) })
             }
         }
     }
@@ -135,32 +154,29 @@ PlasmoidItem {
     P5Support.DataSource {
         id: depsSource
         engine: "executable"
-        connectedSources: [root.depsCmd]
+        connectedSources: []
         onNewData: (sourceName, data) => {
-            if (!data.stdout) { root.deps = []; return }
-            root.deps = data.stdout.trim().split("\n").filter(function (l) { return l.length > 0 })
-                .map(function (l) {
-                    var ok = l.indexOf("OK ") === 0
-                    return { ok: ok, path: l.substring(ok ? 3 : 5) }
-                })
+            if (data.stdout) {
+                root.deps = data.stdout.trim().split("\n").filter(function (l) { return l.length > 0 })
+                    .map(function (l) {
+                        var ok = l.indexOf("OK ") === 0
+                        return { ok: ok, path: l.substring(ok ? 3 : 5) }
+                    })
+            }
+            Qt.callLater(() => { depsSource.disconnectSource(sourceName) })
         }
     }
 
-    Timer {
-        interval: Math.max(2, Plasmoid.configuration.pollInterval) * 1000
-        running: true
-        repeat: true
-        onTriggered: root.refreshStatus()
-    }
+    Component.onCompleted: refreshDeps()
 
     // ---------- 操作 ----------
     function refreshStatus() {
-        statusSource.disconnectSource(root.statusCmd)
-        statusSource.connectSource(root.statusCmd)
+        root.oneShotSeq++
+        statusSource.connectSource(root.statusCmd + " #s" + root.oneShotSeq)
     }
     function refreshDeps() {
-        depsSource.disconnectSource(root.depsCmd)
-        depsSource.connectSource(root.depsCmd)
+        root.oneShotSeq++
+        depsSource.connectSource(root.depsCmd + " #d" + root.oneShotSeq)
     }
     function runCtl(args) {
         if (root.busy) { return }
