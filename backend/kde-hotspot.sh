@@ -1,12 +1,15 @@
 #!/bin/bash
 # 并发热点监督脚本：ap0 虚拟接口 + hostapd，与 Wi-Fi 客户端(STA)同信道并存。
 #
-# 本机硬件事实（实测）：
-#  - AX201 + iwlwifi 固件监管域 self-managed，5GHz NO-IR：STA 在 5GHz 时无法并发发信标。
-#  - 接口组合 #channels<=1：STA 与 AP 必须同信道。反向同样成立——
-#    热点开着时 STA 连不上其他信道，所以 STA 离开热点信道时必须先停热点。
+# 信道原则（与 linux-wifi-hotspot/create_ap 一致）：
+#  - 不修改 STA 连接的频段/信道；热点直接跟随 STA 当前信道发信标（2.4G→hw_mode g，5G→a）。
+#  - 接口组合 #channels<=1 的网卡上 STA 与 AP 必须同信道；STA 换信道/断开时
+#    停掉热点并在新信道上重启（对客户端表现为同 SSID 的短暂掉线重连）。
+#  - 若固件拒绝当前信道（典型：Intel LAR 自管监管域把 5GHz 全部标为 NO-IR，
+#    hostapd 报 "Hardware does not support configured channel"），则按 FALLBACK_2G
+#    （默认 yes）自动把 STA 降到 2.4GHz 再起热点，频段偏好会备份、关闭热点时由 ctl 恢复。
 #
-# 状态机：等 STA 进 2.4GHz → 起热点 → 盯着 STA；STA 离开该信道/断开 → 停热点 → 回去等。
+# 状态机：等 STA 连接 → 在其信道起热点 → 盯着 STA；信道变化/断开 → 重启/停热点 → 回去等。
 #
 # 开关控制（由 kde-hotspot-ctl 写入）：
 #  - /var/lib/kde-hotspot/disabled 存在  → 不启动热点（"保持关闭"）
@@ -28,6 +31,7 @@ DISABLED="$STATE/disabled"
 RUN=/run/kde-hotspot
 IW=/usr/sbin/iw
 IPT=/usr/sbin/iptables
+NMCLI=/usr/bin/nmcli
 
 log(){ echo "[kde-hotspot] $*"; }
 mkdir -p "$RUN" "$STATE"
@@ -57,14 +61,30 @@ ensure_ap0() {
         $IPT -I FORWARD 1 -i "$STA_IF" -o "$AP_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 }
 
+# 5GHz 被固件拒绝时的自动回退：把 STA 降到 2.4GHz。
+# 频段备份（band.backup/band.conn）与 ctl 共用，关闭热点时由 ctl restore_band 恢复。
+force_sta_2g(){
+    local c
+    c=$($NMCLI -t -f NAME,TYPE,DEVICE connection show --active 2>/dev/null \
+        | awk -F: -v d="$STA_IF" '$2=="802-11-wireless" && $3==d {print $1; exit}')
+    [ -n "$c" ] || return 0
+    if [ ! -e "$STATE/band.backup" ]; then
+        $NMCLI -g 802-11-wireless.band connection show "$c" 2>/dev/null | head -1 > "$STATE/band.backup"
+        echo "$c" > "$STATE/band.conn"
+    fi
+    $NMCLI connection modify "$c" 802-11-wireless.band bg 2>/dev/null || true
+    $NMCLI connection up "$c" >/dev/null 2>&1 || true
+    log "5GHz 热点被固件拒绝：已把 Wi-Fi '$c' 切到 2.4GHz（频段偏好已备份，关闭热点时恢复）"
+}
+
 HP=0
 cleanup(){ [ "$HP" -gt 0 ] && kill "$HP" 2>/dev/null; exit 0; }
 trap cleanup TERM INT
 
-logged5g=0
+loggedfail=0
 loggedoff=0
 while :; do
-    # ---- 阶段1：等 STA 关联且在 2.4GHz（或被禁用/切到普通模式时静默等待）----
+    # ---- 阶段1：等 STA 关联（任意频段，热点跟随其信道；禁用/普通模式时静默等待）----
     while :; do
         # 手动关闭：不启动热点
         if [ -e "$DISABLED" ]; then
@@ -84,20 +104,13 @@ while :; do
             sleep 5; continue
         fi
         CH=$(sta_channel)
-        if [ -z "$CH" ]; then
-            sleep 5; logged5g=0; continue
-        fi
-        if [ "$CH" -gt 13 ] 2>/dev/null; then
-            if [ "$logged5g" -eq 0 ]; then
-                log "STA 在 5GHz(ch$CH)：本卡固件禁止 5GHz 并发热点，等待 Wi-Fi 切回 2.4GHz"
-                logged5g=1
-            fi
-            sleep 5; continue
-        fi
+        [ -z "$CH" ] && { sleep 5; continue; }   # STA 未连接
         break
     done
-    logged5g=0
-    log "STA 在 2.4GHz ch$CH → 启动热点（同信道并存）"
+    # 热点跟随 STA 信道：2.4G→g，5G→a（同 create_ap；不改 STA 的频段）
+    HW=g
+    [ "$CH" -le 14 ] 2>/dev/null || HW=a
+    log "STA 在 ${HW} ch$CH → 热点跟随此信道启动（同信道并存）"
     $IW reg set CN
     ensure_ap0 || { sleep 10; continue; }
 
@@ -109,7 +122,7 @@ while :; do
         printf 'ssid=%s\n' "$SSID"
         printf 'country_code=CN\n'
         printf 'ieee80211d=1\n'
-        printf 'hw_mode=g\n'
+        printf 'hw_mode=%s\n' "$HW"
         printf 'channel=%s\n' "$CH"
         printf 'wpa=2\n'
         printf 'wpa_passphrase=%s\n' "$PASS"
@@ -126,6 +139,30 @@ while :; do
     log "启动 hostapd: $SSID @ ch$CH (网关 $AP_IP)"
     /usr/sbin/hostapd -i "$AP_IF" "$RUN/hostapd.conf" &
     HP=$!
+    # 确认 AP 真的发信标了：固件拒绝信道时 hostapd 会退出或 ap0 一直无信道
+    #（典型是 Intel LAR 下 5GHz 全 NO-IR）。此时按 FALLBACK_2G 回退。
+    ok=0
+    for _ in 1 2 3 4 5 6 7 8; do
+        kill -0 "$HP" 2>/dev/null || break
+        if [ -n "$($IW dev "$AP_IF" info 2>/dev/null | awk '/channel/{print $2; exit}')" ]; then
+            ok=1; break
+        fi
+        sleep 1
+    done
+    if [ "$ok" -ne 1 ]; then
+        if [ "$loggedfail" -ne "$CH" ]; then
+            log "热点无法在 ch$CH 发信标（硬件/固件拒绝该信道）"
+            loggedfail=$CH
+        fi
+        kill "$HP" 2>/dev/null; wait "$HP" 2>/dev/null; HP=0
+        ip link set "$AP_IF" down 2>/dev/null
+        if [ "$CH" -gt 14 ] && [ "${FALLBACK_2G:-yes}" != "no" ]; then
+            force_sta_2g
+        fi
+        sleep 3
+        continue
+    fi
+    loggedfail=0
     misses=0
     while kill -0 "$HP" 2>/dev/null; do
         # 手动关闭 → 立即停

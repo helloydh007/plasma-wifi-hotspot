@@ -14,8 +14,9 @@ Windows 的"移动热点"可以**一边连接 Wi-Fi、一边开热点**，同一
 Linux 桌面原生却没有这个体验——NetworkManager 的热点会顶掉 Wi-Fi 连接。本项目的出发点就是把
 Windows 的这个能力带到 Linux：**不插网线、不断 Wi-Fi，照样开热点**。为此实现了并发模式
 （hostapd + 虚拟接口 `ap0`，Wi-Fi 客户端保持在线），同时也保留更通用的普通模式
-（NetworkManager 原生热点，Wi-Fi 需断开）作为兜底。受硬件约束，并发模式在同一块 Intel 网卡上
-只能工作在 2.4GHz 同信道，详见下文"硬件前提与已知限制"。
+（NetworkManager 原生热点，Wi-Fi 需断开）作为兜底。"热点跟随 Wi-Fi 信道、不强行改动 Wi-Fi"
+的信道原则参考了 [linux-wifi-hotspot](https://github.com/lakinduakash/linux-wifi-hotspot)
+（create_ap 后端）的成熟做法；受硬件约束的部分见下文"硬件前提与已知限制"。
 
 ## 特性
 
@@ -35,7 +36,7 @@ Windows 的这个能力带到 Linux：**不插网线、不断 Wi-Fi，照样开�
 |---|---|---|
 | Wi-Fi 客户端 | **保持连接**（网速不受影响） | **必须断开**（这是该模式的定义） |
 | 实现 | hostapd + 虚拟 `ap0` + dnsmasq + iptables NAT | NetworkManager 原生热点（`ipv4.method shared`，自动 DHCP/NAT） |
-| 频段 | 2.4GHz，**跟随 Wi-Fi 的信道** | 2.4GHz（ch6） |
+| 频段 | **跟随 Wi-Fi 当前信道**（2.4G→hw_mode g / 5G→a）；固件拒绝 5G 时自动回退 2.4G 并在关闭热点时恢复频段偏好 | 2.4GHz（ch6） |
 | 上行 | 当前 Wi-Fi 连接 | 默认路由设备（例如有线网卡）；没有上行时仅局域网 |
 
 为什么并发模式限制这么多：见下一节。**5GHz 热点在这块网卡上两种模式都不可用**（实测）。
@@ -44,8 +45,8 @@ Windows 的这个能力带到 Linux：**不插网线、不断 Wi-Fi，照样开�
 
 在 Intel AX201 + `iwlwifi` 上实测得到的三条硬约束：
 
-1. **5GHz 无法做 AP**。iwlwifi 固件的监管域是 *self-managed*，5GHz 全部标记为 `NO-IR`（禁止发信标），用户态的 `iw reg set` 改不动它。所以无论哪种模式，热点只能是 2.4GHz。
-2. **STA 与 AP 必须同信道**。驱动的接口组合限制是 `#{ managed } <= 1, #{ AP, ... } <= 1, #channels <= 1`：允许"客户端 + AP 同时存在"，但只能在同一信道上时分复用。因此并发模式只在 Wi-Fi 位于 2.4GHz 时生效；Wi-Fi 在 5GHz 时插件显示"待命"。
+1. **5GHz 无法做 AP（本机固件限制，非原理限制）**。iwlwifi 的监管域是 *self-managed*（LAR，位置感知监管），5GHz 全部标记为 `NO-IR`（禁止发信标），用户态 `iw reg set` 改不动它——实测 hostapd 报 "Hardware does not support configured channel"。因此并发模式**优先跟随 Wi-Fi 当前信道**（含 5GHz，在支持的网卡上直接可用），被固件拒绝时才自动把 Wi-Fi 降到 2.4GHz（关闭热点时恢复频段偏好；配置 `FALLBACK_2G=no` 可禁止降级）。想在 Intel 上解锁真正的 5GHz 并发热点：上游 [linux-wifi-hotspot](https://github.com/lakinduakash/linux-wifi-hotspot) 提供的 [iwlwifi-lar-disable](https://github.com/lakinduakash/linux-wifi-hotspot/tree/master/util/iwlwifi-lar-disable) 工具（DKMS 给 iwlmvm 加回 `lar_disable=1` 参数）装好后，本项目的并发模式无需任何改动即可在 5GHz 工作。
+2. **STA 与 AP 必须同信道**。驱动的接口组合限制是 `#{ managed } <= 1, #{ AP, ... } <= 1, #channels <= 1`：允许"客户端 + AP 同时存在"，但只能在同一信道上时分复用。这正是"热点跟随 Wi-Fi 信道"的原因——客户端换信道/断开时，监督脚本会停掉热点并在新信道上重建。
 3. **NetworkManager 自带的热点功能会把客户端连接顶掉**（它把整块网卡从 managed 切成 AP，属于单模式）。所以并发模式不能走 NM，必须用 hostapd 在虚拟接口上自己发信标——这也是本项目的核心。
 
 > 顺带解释了"为什么 Windows 可以一边连 Wi-Fi 一边开热点"：Windows 的移动热点走 Wi-Fi Direct（P2P-GO），而这张卡的组合规则里 P2P-GO 允许 `#channels <= 2`，可以跨信道；Linux 的 AP 模式没有这条路。

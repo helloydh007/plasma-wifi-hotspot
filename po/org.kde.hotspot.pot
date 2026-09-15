@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-15 20:43+0800\n"
+"POT-Creation-Date: 2026-09-15 21:36+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -99,7 +99,7 @@ msgid "Hotspot mode"
 msgstr ""
 
 #: plasmoid/contents/ui/FullRepresentation.qml:133
-msgid "Concurrent (Wi-Fi stays on, hotspot limited to 2.4GHz same channel)"
+msgid "Concurrent (Wi-Fi stays on, hotspot follows the Wi-Fi channel)"
 msgstr ""
 
 #: plasmoid/contents/ui/FullRepresentation.qml:141
@@ -184,9 +184,9 @@ msgstr ""
 
 #: plasmoid/contents/ui/configGeneral.qml:23
 msgid ""
-"Tip: concurrent mode keeps Wi-Fi connected (hotspot on the same 2.4GHz "
-"channel); normal mode disconnects Wi-Fi and uses the whole NIC as the "
-"hotspot."
+"Tip: concurrent mode keeps Wi-Fi connected (the hotspot follows the Wi-Fi "
+"channel; it falls back to 2.4GHz if the hardware refuses 5GHz); normal mode "
+"disconnects Wi-Fi and uses the whole NIC as the hotspot."
 msgstr ""
 
 #: plasmoid/contents/ui/main.qml:34

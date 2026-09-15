@@ -130,7 +130,7 @@ QQC2.ScrollView {
         QQC2.RadioButton {
             Layout.leftMargin: Kirigami.Units.smallSpacing
             Layout.fillWidth: true
-            text: i18n("Concurrent (Wi-Fi stays on, hotspot limited to 2.4GHz same channel)")
+            text: i18n("Concurrent (Wi-Fi stays on, hotspot follows the Wi-Fi channel)")
             checked: root.mode === "concurrent"
             enabled: !root.busy
             onClicked: root.setMode("concurrent")

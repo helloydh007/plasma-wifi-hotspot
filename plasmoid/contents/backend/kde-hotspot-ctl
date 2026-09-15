@@ -77,23 +77,9 @@ stop_normal(){
     fi
 }
 
-# ---------- 频段偏好（并发模式用） ----------
-sta_band(){
-    local c; c=$(sta_conn); [ -n "$c" ] || { echo ""; return; }
-    $NMCLI -g 802-11-wireless.band connection show "$c" 2>/dev/null | head -1
-}
-force_band_2g(){
-    local c; c=$(sta_conn) || true
-    [ -n "${c:-}" ] || { log "当前没有活动的 Wi-Fi 连接，跳过频段切换"; return 0; }
-    if [ ! -e "$BANDBACKUP" ]; then
-        sta_band > "$BANDBACKUP"
-        # 记住是哪个连接的偏好：恢复时该连接可能已不是活动连接
-        echo "$c" > "$CONNBACKUP"
-    fi
-    $NMCLI connection modify "$c" 802-11-wireless.band bg >/dev/null 2>&1 || true
-    $NMCLI connection up "$c" >/dev/null 2>&1 || true
-    log "已把 '$c' 切到 2.4GHz"
-}
+# ---------- 频段偏好恢复（并发模式）----------
+# 备份（band.backup/band.conn）由监督脚本在"5GHz 被固件拒绝、自动降 2.4G"时写入；
+# ctl 不再主动改 STA 频段，只在关闭热点时按备份恢复。
 restore_band(){
     [ -e "$BANDBACKUP" ] || return 0
     local c v
@@ -145,7 +131,6 @@ do_on(){
         ;;
       *)
         stop_normal
-        force_band_2g
         systemctl start "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
         sleep 1
         if ! systemctl is-active --quiet "$UNIT_MAIN"; then
@@ -153,8 +138,8 @@ do_on(){
             result false "服务启动失败，见 journalctl -u kde-hotspot"
             return 1
         fi
-        log "并发模式已开启（热点将跟随 Wi-Fi 信道在 2.4GHz 起信标）"
-        result true "已开启：热点将以 2.4GHz 同信道发信标（SSID=$SSID）"
+        log "并发模式已开启（热点跟随 Wi-Fi 当前信道；固件不支持 5G 时自动回退 2.4GHz）"
+        result true "已开启：热点跟随 Wi-Fi 信道发信标（SSID=$SSID）"
         ;;
     esac
     rm -f "$DISABLED"

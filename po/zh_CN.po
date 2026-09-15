@@ -96,8 +96,8 @@ msgid "Hotspot mode"
 msgstr "热点模式"
 
 #: plasmoid/contents/ui/FullRepresentation.qml:133
-msgid "Concurrent (Wi-Fi stays on, hotspot limited to 2.4GHz same channel)"
-msgstr "并发模式（Wi-Fi 不断，热点限 2.4GHz 同信道）"
+msgid "Concurrent (Wi-Fi stays on, hotspot follows the Wi-Fi channel)"
+msgstr "并发模式（Wi-Fi 不断，热点跟随 Wi-Fi 信道）"
 
 #: plasmoid/contents/ui/FullRepresentation.qml:141
 msgid "Normal (disconnect Wi-Fi, whole NIC as hotspot)"

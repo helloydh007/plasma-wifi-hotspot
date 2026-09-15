@@ -13,8 +13,10 @@ one radio, online and sharing at the same time. The Linux desktop has no such ex
 box (NetworkManager's hotspot kicks the client off). This project exists to bring that Windows
 capability to Linux: **run a hotspot without giving up the Wi-Fi connection or plugging in a cable**.
 It does so with the concurrent mode (hostapd on a virtual `ap0` interface), while keeping the more
-portable normal mode (NetworkManager native hotspot, Wi-Fi disconnected) as a fallback. See the
-hardware constraints below for why concurrent mode is limited to 2.4 GHz on one channel here.
+portable normal mode (NetworkManager native hotspot, Wi-Fi disconnected) as a fallback. The
+"hotspot follows the Wi-Fi client's channel, never touching the client's band" principle is shared
+with [linux-wifi-hotspot](https://github.com/lakinduakash/linux-wifi-hotspot) (create_ap backend).
+See the hardware notes below for why concurrent mode falls back to 2.4 GHz on this particular Intel card.
 
 ![Plugin UI](docs/screenshot.png)
 
@@ -35,15 +37,15 @@ hardware constraints below for why concurrent mode is limited to 2.4 GHz on one 
 |---|---|---|
 | Wi-Fi client | **stays connected** (no speed impact) | **must disconnect** (that's what defines this mode) |
 | How | hostapd on a virtual `ap0` interface + dnsmasq + iptables NAT | NetworkManager native hotspot (`ipv4.method shared`, auto DHCP/NAT) |
-| Band | 2.4 GHz, **follows the Wi-Fi client's channel** | 2.4 GHz (ch6) |
+| Band | **follows the Wi-Fi client's channel** (2.4G→hw_mode g / 5G→a); falls back to 2.4G automatically if the firmware refuses 5G, preference restored on hotspot-off | 2.4 GHz (ch6) |
 | Uplink | the current Wi-Fi connection | the default-route device (e.g. ethernet); without uplink it's LAN-only |
 
 ## Hardware facts and limitations (measured)
 
 On Intel AX201 + `iwlwifi`:
 
-1. **5 GHz AP is impossible** — the firmware's regulatory domain is self-managed and marks all of 5 GHz as NO-IR; `iw reg set` cannot change it. Both modes are 2.4 GHz-only.
-2. **STA and AP must share one channel** — the driver allows `{managed} <= 1, {AP} <= 1, #channels <= 1`. Concurrent mode only works while the Wi-Fi client is on 2.4 GHz; otherwise the applet shows "standby".
+1. **5 GHz AP is impossible on this firmware (not by principle)** — iwlwifi's regulatory domain is *self-managed* (LAR) and marks all of 5 GHz as NO-IR; `iw reg set` cannot change it (hostapd fails with "Hardware does not support configured channel"). Concurrent mode therefore **follows the Wi-Fi client's channel first** (including 5 GHz, which just works on capable NICs); only when the firmware refuses does it automatically move the client to 2.4 GHz (preference restored on hotspot-off; `FALLBACK_2G=no` disables the downgrade). To unlock true 5 GHz concurrent hotspots on Intel, upstream [linux-wifi-hotspot](https://github.com/lakinduakash/linux-wifi-hotspot) ships [iwlwifi-lar-disable](https://github.com/lakinduakash/linux-wifi-hotspot/tree/master/util/iwlwifi-lar-disable) (DKMS patch adding back `lar_disable=1`); once installed, this project's concurrent mode works on 5 GHz with no further changes.
+2. **STA and AP must share one channel** — the driver allows `{managed} <= 1, {AP} <= 1, #channels <= 1`. That's why the hotspot follows the client's channel: when the client roams to another channel or drops, the supervisor pauses the hotspot and re-establishes it on the client's new channel.
 3. **NetworkManager's own hotspot kicks the client off** (it flips the whole NIC from managed to AP). That's why concurrent mode uses hostapd on a virtual interface instead.
 
 This also explains why Windows can do "Wi-Fi + hotspot at once": its Mobile Hotspot uses Wi-Fi Direct (P2P-GO), which this chipset allows on a second channel; plain Linux AP mode has no such path.

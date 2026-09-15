@@ -20,7 +20,7 @@ Kirigami.FormLayout {
 
     QQC2.Label {
         Kirigami.FormData.isSection: true
-        text: i18n("Tip: concurrent mode keeps Wi-Fi connected (hotspot on the same 2.4GHz channel); normal mode disconnects Wi-Fi and uses the whole NIC as the hotspot.")
+        text: i18n("Tip: concurrent mode keeps Wi-Fi connected (the hotspot follows the Wi-Fi channel; it falls back to 2.4GHz if the hardware refuses 5GHz); normal mode disconnects Wi-Fi and uses the whole NIC as the hotspot.")
         wrapMode: Text.WordWrap
         opacity: 0.7
     }
