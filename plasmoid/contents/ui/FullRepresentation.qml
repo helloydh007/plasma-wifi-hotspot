@@ -21,22 +21,23 @@ QQC2.ScrollView {
             Layout.margins: Kirigami.Units.smallSpacing
             spacing: Kirigami.Units.smallSpacing
 
-            // 与托盘一致：热点图标，关闭时叠红色 ✕
+            // 与托盘一致：热点原图标，关闭时加红色斜线（仿静音图标）
             Item {
+                clip: true
                 implicitWidth: Kirigami.Units.iconSizes.medium
                 implicitHeight: Kirigami.Units.iconSizes.medium
                 Kirigami.Icon {
                     anchors.fill: parent
                     source: root.baseIcon
-                    opacity: root.offBadge ? 0.4 : 1.0
                 }
-                Kirigami.Icon {
+                Rectangle {
                     visible: root.offBadge
-                    source: "data-error"
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    implicitWidth: Math.round(parent.width * 0.55)
-                    implicitHeight: Math.round(parent.height * 0.55)
+                    anchors.centerIn: parent
+                    width: parent.width * 1.5
+                    height: Math.max(1.2, parent.width * 0.055)
+                    radius: height / 2
+                    rotation: 45
+                    color: Kirigami.Theme.negativeTextColor
                 }
             }
             ColumnLayout {
