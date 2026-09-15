@@ -1,0 +1,10 @@
+# 并发热点配置示例
+# 安装后请复制为 /etc/zcode-hotspot/config 并改成你自己的：
+#   sudo install -m 644 config.example /etc/zcode-hotspot/config
+STA_IF=wlp0s20f3     # 上行 Wi-Fi 接口（用 iw dev 查看）
+AP_IF=ap0            # 虚拟热点接口名
+AP_IP=10.233.33.1    # 热点网关
+AP_NET=10.233.33.0/24
+SSID=my-hotspot      # 热点名称（改成你的）
+PASS=change-me-12345 # 热点密码 8-63 字符（改成你的）
+MODE=concurrent      # concurrent=并发模式(保持 Wi-Fi) / normal=普通模式(断开 Wi-Fi)

@@ -1,0 +1,23 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "org.zcode.hotspot",
+        "Name": "Wi-Fi 热点控制",
+        "Name[zh_CN]": "Wi-Fi 热点控制",
+        "Description": "开关并发热点/普通热点，显示频段与信道，含依赖自检与开机自启",
+        "Description[zh_CN]": "开关并发热点/普通热点，显示频段与信道，含依赖自检与开机自启",
+        "Icon": "network-wireless-hotspot",
+        "Category": "System Information",
+        "EnabledByDefault": true,
+        "License": "GPL-2.0-or-later",
+        "Version": "1.0.0",
+        "Authors": [
+            {
+                "Name": "ZCode"
+            }
+        ]
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-NotificationArea": "true",
+    "X-Plasma-NotificationAreaCategory": "SystemServices"
+}

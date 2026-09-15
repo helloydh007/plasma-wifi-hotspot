@@ -1,0 +1,122 @@
+# KDE 热点控制（KDE Hotspot Control）
+
+Plasma 6 系统托盘插件 + 后端服务，用来一键开关 Wi-Fi 热点，并支持两种截然不同的模式。
+
+![插件界面](docs/screenshot.png)
+
+在 Debian 13 + KDE Plasma 6.3（Intel AX201 / iwlwifi）上开发并实测通过。
+
+## 特性
+
+- **两种模式**：并发模式（保持 Wi-Fi 连接）与普通模式（断开 Wi-Fi，网卡整体做 AP）
+- **托盘图标**反映状态；鼠标悬停显示热点状态、频段、信道、客户端数
+- 面板里可切换模式、开关热点、**开机自启**开关
+- **依赖自检**：逐项检查 hostapd / dnsmasq / iw / iptables / 后端文件 / polkit 授权，缺失时给出可复制的修复命令
+- **免密码操作**：polkit 规则只授权执行一个控制脚本（见下"安全"）
+- 另有**桌面入口**：应用菜单/KRunner 搜"Wi-Fi 热点控制"可打开独立窗口
+
+## 两种模式
+
+| | 并发模式 | 普通模式 |
+|---|---|---|
+| Wi-Fi 客户端 | **保持连接**（网速不受影响） | **必须断开**（这是该模式的定义） |
+| 实现 | hostapd + 虚拟 `ap0` + dnsmasq + iptables NAT | NetworkManager 原生热点（`ipv4.method shared`，自动 DHCP/NAT） |
+| 频段 | 2.4GHz，**跟随 Wi-Fi 的信道** | 2.4GHz（ch6） |
+| 上行 | 当前 Wi-Fi 连接 | 默认路由设备（例如有线网卡）；没有上行时仅局域网 |
+
+为什么并发模式限制这么多：见下一节。**5GHz 热点在这块网卡上两种模式都不可用**（实测）。
+
+## 硬件前提与已知限制（实测结论）
+
+在 Intel AX201 + `iwlwifi` 上实测得到的三条硬约束：
+
+1. **5GHz 无法做 AP**。iwlwifi 固件的监管域是 *self-managed*，5GHz 全部标记为 `NO-IR`（禁止发信标），用户态的 `iw reg set` 改不动它。所以无论哪种模式，热点只能是 2.4GHz。
+2. **STA 与 AP 必须同信道**。驱动的接口组合限制是 `#{ managed } <= 1, #{ AP, ... } <= 1, #channels <= 1`：允许"客户端 + AP 同时存在"，但只能在同一信道上时分复用。因此并发模式只在 Wi-Fi 位于 2.4GHz 时生效；Wi-Fi 在 5GHz 时插件显示"待命"。
+3. **NetworkManager 自带的热点功能会把客户端连接顶掉**（它把整块网卡从 managed 切成 AP，属于单模式）。所以并发模式不能走 NM，必须用 hostapd 在虚拟接口上自己发信标——这也是本项目的核心。
+
+> 顺带解释了"为什么 Windows 可以一边连 Wi-Fi 一边开热点"：Windows 的移动热点走 Wi-Fi Direct（P2P-GO），而这张卡的组合规则里 P2P-GO 允许 `#channels <= 2`，可以跨信道；Linux 的 AP 模式没有这条路。
+
+## 安装
+
+依赖：`hostapd`、`dnsmasq`、`iw`、`iptables`（Debian 13 上 iw/iptables 通常已随系统安装，hostapd/dnsmasq 需要装）。
+
+```bash
+git clone <此仓库> && cd kde-hotspot-control
+bash install.sh        # 部署后端(会弹一次授权框) + 安装插件(用户级) + 安装桌面入口
+```
+
+安装后：
+
+1. 编辑 `/etc/zcode-hotspot/config`（权限 600），把 `SSID` / `PASS` 改成你自己的。
+   **未设置时后端拒绝启动热点**，不会用默认密码起热点。
+2. 把插件放进托盘：右键面板 → 系统托盘设置 → 条目 → 勾选"Wi-Fi 热点控制"；
+   或者直接拖到面板上（放在面板上会额外显示频段/信道文字，托盘里只显示图标）。
+
+## 使用
+
+- 点托盘图标 → 面板：状态、开/关、模式单选、开机自启、依赖自检
+- **开**：并发模式下会自动把 Wi-Fi 切到 2.4GHz 并起草热点；普通模式下会先断开 Wi-Fi 再起 AP（面板上有明确提示）
+- **关**：并发模式下会停热点并把 Wi-Fi 的频段偏好恢复成关闭前的值（通常回 5GHz）
+- 右键托盘图标 → "配置 Wi-Fi 热点控制…"：设置显示标签、刷新间隔
+
+命令行等价物（无需 sudo，polkit 已授权）：
+
+```bash
+pkexec /usr/local/sbin/zcode-hotspot-ctl status          # 状态 JSON
+pkexec /usr/local/sbin/zcode-hotspot-ctl on|off          # 按当前模式开关
+pkexec /usr/local/sbin/zcode-hotspot-ctl mode concurrent|normal
+pkexec /usr/local/sbin/zcode-hotspot-ctl autostart on|off
+```
+
+## 架构
+
+```
+[ Plasma 插件（用户） ] --pkexec(免密码)--> [ zcode-hotspot-ctl（root） ]
+        |                                            |
+        +-- 只读状态：直接跑 iw/nmcli/systemctl        +-- 两套热点机制的启停与互斥
+            （不需要特权）                              +-- nmcli 切频段 / NM 热点
+                                                       +-- systemctl start|stop|enable|disable
+```
+
+| 文件 | 作用 |
+|---|---|
+| `plasmoid/` | Plasma 6 插件包（`kpackagetool6 -t Plasma/Applet -i plasmoid`） |
+| `backend/zcode-hotspot-ctl` | **唯一的特权入口**：on/off/mode/autostart/status |
+| `backend/zcode-hotspot.sh` | 并发模式监督循环：跟随 Wi-Fi 信道起停 hostapd；遵守"保持关闭"标记 |
+| `backend/zcode-hotspot{,-dhcp,-normal}.service` | systemd 单元（后者是普通模式的开机自启） |
+| `backend/org.zcode.hotspotctl.policy` + `49-zcode-hotspot.rules` | polkit 动作与规则 |
+| `backend/deploy.sh` | 部署后端（root）；插件包里也带一份，供插件内"一键修复"使用 |
+| `backend/org.zcode.hotspot.desktop` | 桌面入口（`plasmawindowed org.zcode.hotspot`） |
+
+## 安全
+
+- polkit 授权**只作用于 `/usr/local/sbin/zcode-hotspot-ctl` 这一个脚本**（动作带 `org.freedesktop.policykit.exec.path` 注解），不能拿来执行任意命令。删除 `/etc/polkit-1/rules.d/49-zcode-hotspot.rules` 即恢复成"每次弹密码"。
+- **包安装刻意不在免密范围内**：否则等于"任何用户进程都能免密装包"。所以插件里的依赖修复给的是可复制的命令。
+- 热点密码保存在 `/etc/zcode-hotspot/config`（权限 600，仅 root 可读）。脚本不再内置任何默认密码，配置缺失时拒绝启动。
+- 后端服务以 root 运行是必需的（hostapd/dnsmasq/iptables 都需要特权）。
+
+## 卸载
+
+```bash
+sudo systemctl disable --now zcode-hotspot zcode-hotspot-dhcp zcode-hotspot-normal
+sudo rm /etc/systemd/system/zcode-hotspot*.service /usr/local/sbin/zcode-hotspot{,-ctl}*
+sudo rm -rf /etc/zcode-hotspot /var/lib/zcode-hotspot
+sudo rm /usr/share/polkit-1/actions/org.zcode.hotspotctl.policy /etc/polkit-1/rules.d/49-zcode-hotspot.rules
+sudo rm /etc/NetworkManager/conf.d/99-zcode-hotspot-ap0.conf
+sudo systemctl daemon-reload && sudo nmcli general reload
+kpackagetool6 -t Plasma/Applet -r org.zcode.hotspot       # 卸载插件
+rm ~/.local/share/applications/org.zcode.hotspot.desktop  # 移除桌面入口
+```
+
+## English summary
+
+A Plasma 6 system-tray applet + root backend to toggle a Wi-Fi hotspot, in two modes:
+**concurrent** (hostapd on a virtual `ap0`, the Wi-Fi client stays connected — same-channel only)
+and **normal** (NetworkManager AP mode, which necessarily drops the Wi-Fi client).
+Tested on Debian 13 / Plasma 6.3 / Intel AX201: 5 GHz AP is impossible on this chipset
+(self-managed regulatory domain marks 5 GHz as no-IR), and STA+AP concurrency requires the
+same channel. Install with `bash install.sh`; see the Chinese sections above for details.
+
+## 许可
+
+GPL-2.0-or-later（见 `LICENSE`）。

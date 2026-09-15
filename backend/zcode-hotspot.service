@@ -1,0 +1,14 @@
+[Unit]
+Description=并发热点 hostapd（ap0 虚拟接口，与 Wi-Fi 客户端同信道并存）
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/zcode-hotspot.sh
+Restart=on-failure
+RestartSec=8
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

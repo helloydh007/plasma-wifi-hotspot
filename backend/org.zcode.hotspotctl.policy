@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>zcode-hotspot</vendor>
+  <action id="org.zcode.hotspotctl.run">
+    <description>Control the concurrent Wi-Fi hotspot</description>
+    <description xml:lang="zh_CN">控制 Wi-Fi 热点（开/关/切换模式/开机自启）</description>
+    <message>Authentication is required to control the Wi-Fi hotspot</message>
+    <message xml:lang="zh_CN">需要授权才能控制 Wi-Fi 热点</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <!-- 关键：本动作只能用于执行这一个脚本，不能拿去运行任意命令 -->
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/sbin/zcode-hotspot-ctl</annotate>
+  </action>
+</policyconfig>
