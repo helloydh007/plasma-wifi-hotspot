@@ -1,0 +1,324 @@
+#!/bin/bash
+# 热点控制入口（以 root 运行；由插件通过 pkexec 免密码调用，
+# polkit 动作带 exec.path 注解，授权只能执行本脚本）
+#
+# 用法:
+#   zcode-hotspot-ctl on            按当前模式开启热点
+#   zcode-hotspot-ctl off           关闭热点
+#   zcode-hotspot-ctl mode M        切换模式: concurrent | normal
+#   zcode-hotspot-ctl autostart on|off
+#   zcode-hotspot-ctl status --json 输出状态 JSON（只读）
+#
+# 两种模式:
+#   concurrent  并发模式: hostapd + 虚拟 ap0，Wi-Fi 客户端保持连接（受限于同信道）
+#   normal      普通模式: NetworkManager 原生热点，同一网卡切 AP，Wi-Fi 客户端必须断开
+set -u
+
+CONF=/etc/zcode-hotspot/config
+STATE=/var/lib/zcode-hotspot
+DISABLED="$STATE/disabled"
+BANDBACKUP="$STATE/band.backup"
+STABACKUP="$STATE/sta-conn.backup"
+NM_AP_CON=zcode-hotspot-normal
+UNIT_MAIN=zcode-hotspot.service
+UNIT_DHCP=zcode-hotspot-dhcp.service
+UNIT_NORMAL=zcode-hotspot-normal.service
+
+IW=/usr/sbin/iw
+NMCLI=/usr/bin/nmcli
+IPT=/usr/sbin/iptables
+
+# ---------- 读配置 ----------
+[ -r "$CONF" ] && . "$CONF"
+STA_IF=${STA_IF:-wlp0s20f3}
+AP_IF=${AP_IF:-ap0}
+AP_IP=${AP_IP:-10.233.33.1}
+AP_NET=${AP_NET:-10.233.33.0/24}
+SSID=${SSID:-}
+PASS=${PASS:-}
+MODE=${MODE:-concurrent}
+
+log(){ echo "[ctl] $*" >&2; }
+mkdir -p "$STATE"
+
+# ---------- 只读探测 ----------
+iface_type(){ $IW dev "$STA_IF" info 2>/dev/null | awk '/type/{print $2; exit}'; }
+iface_channel(){ $IW dev "$STA_IF" info 2>/dev/null | awk '/channel/{print $2; exit}'; }
+sta_conn(){
+    $NMCLI -t -f NAME,TYPE,DEVICE connection show --active 2>/dev/null \
+        | awk -F: -v d="$STA_IF" '$2=="802-11-wireless" && $3==d {print $1; exit}'
+}
+ap0_channel(){ $IW dev "$AP_IF" info 2>/dev/null | awk '/channel/{print $2; exit}'; }
+normal_running(){
+    $NMCLI -t -f NAME,DEVICE connection show --active 2>/dev/null | grep -q "^$NM_AP_CON:" && echo yes || echo no
+}
+concurrent_running(){ systemctl is-active --quiet "$UNIT_MAIN" 2>/dev/null && echo yes || echo no; }
+autostart_state(){
+    if [ "$MODE" = normal ]; then
+        systemctl is-enabled --quiet "$UNIT_NORMAL" 2>/dev/null && echo on || echo off
+    else
+        systemctl is-enabled --quiet "$UNIT_MAIN" 2>/dev/null && echo on || echo off
+    fi
+}
+
+# ---------- 两套机制的拆除（互斥保证） ----------
+stop_concurrent(){
+    systemctl stop "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
+    ip link set "$AP_IF" down >/dev/null 2>&1 || true
+    $IW dev "$AP_IF" del >/dev/null 2>&1 || true
+}
+stop_normal(){
+    if $NMCLI -t -f NAME connection show 2>/dev/null | grep -qx "$NM_AP_CON"; then
+        $NMCLI connection down "$NM_AP_CON" >/dev/null 2>&1 || true
+        $NMCLI connection delete "$NM_AP_CON" >/dev/null 2>&1 || true
+    fi
+}
+
+# ---------- 频段偏好（并发模式用） ----------
+sta_band(){
+    local c; c=$(sta_conn); [ -n "$c" ] || { echo ""; return; }
+    $NMCLI -g 802-11-wireless.band connection show "$c" 2>/dev/null | head -1
+}
+force_band_2g(){
+    local c; c=$(sta_conn) || true
+    [ -n "${c:-}" ] || { log "当前没有活动的 Wi-Fi 连接，跳过频段切换"; return 0; }
+    [ -e "$BANDBACKUP" ] || sta_band > "$BANDBACKUP"
+    $NMCLI connection modify "$c" 802-11-wireless.band bg >/dev/null 2>&1 || true
+    $NMCLI connection up "$c" >/dev/null 2>&1 || true
+    log "已把 '$c' 切到 2.4GHz"
+}
+restore_band(){
+    [ -e "$BANDBACKUP" ] || return 0
+    local c v; c=$(sta_conn); v=$(cat "$BANDBACKUP" 2>/dev/null); rm -f "$BANDBACKUP"
+    [ -n "${c:-}" ] || return 0
+    $NMCLI connection modify "$c" 802-11-wireless.band "$v" >/dev/null 2>&1 || true
+    $NMCLI connection up "$c" >/dev/null 2>&1 || true
+    log "已恢复 '$c' 的频段偏好（${v:-自动}）"
+}
+
+# ---------- on / off ----------
+do_on(){
+    if [ -z "${SSID:-}" ] || [ "${#PASS}" -lt 8 ]; then
+        log "错误：请先在 /etc/zcode-hotspot/config 里设置 SSID 与 PASS（密码至少 8 位）"
+        result false "请先设置 SSID 与 PASS（密码至少 8 位）"
+        return 1
+    fi
+    rm -f "$DISABLED"
+    case "$MODE" in
+      normal)
+        stop_concurrent
+        local c; c=$(sta_conn)
+        if [ -n "${c:-}" ]; then
+            echo "$c" > "$STABACKUP"
+            $NMCLI connection down "$c" >/dev/null 2>&1 || true
+            log "已断开 Wi-Fi 客户端连接 '$c'（普通模式必须）"
+        fi
+        if ! $NMCLI -t -f NAME connection show 2>/dev/null | grep -qx "$NM_AP_CON"; then
+            $NMCLI connection add type wifi ifname "$STA_IF" con-name "$NM_AP_CON" autoconnect no \
+                802-11-wireless.mode ap \
+                802-11-wireless.band bg \
+                802-11-wireless.channel 6 \
+                802-11-wireless.ssid "$SSID" \
+                802-11-wireless-security.key-mgmt wpa-psk \
+                802-11-wireless-security.psk "$PASS" \
+                ipv4.method shared >/dev/null 2>&1 || { log "创建热点 profile 失败"; result false "创建热点 profile 失败"; return 1; }
+            log "已创建普通模式热点 profile（ch6, shared）"
+        fi
+        $NMCLI connection up "$NM_AP_CON" >/dev/null 2>&1 || { log "激活普通模式热点失败"; result false "激活普通模式热点失败"; return 1; }
+        log "普通模式热点已开启（SSID=$SSID）"
+        result true "普通模式热点已开启（$SSID）"
+        ;;
+      *)
+        stop_normal
+        force_band_2g
+        systemctl start "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
+        log "并发模式已开启（热点将跟随 Wi-Fi 信道在 2.4GHz 起信标）"
+        result true "已开启：热点将以 2.4GHz 同信道发信标（SSID=$SSID）"
+        ;;
+    esac
+    rm -f "$DISABLED"
+}
+
+do_off(){
+    case "$MODE" in
+      normal)
+        stop_normal
+        if [ -s "$STABACKUP" ]; then
+            local c; c=$(cat "$STABACKUP")
+            $NMCLI connection up "$c" >/dev/null 2>&1 || true
+            rm -f "$STABACKUP"
+            log "已恢复 Wi-Fi 连接 '$c'"
+        fi
+        log "普通模式热点已关闭"
+        result true "普通模式热点已关闭，Wi-Fi 已恢复"
+        ;;
+      *)
+        touch "$DISABLED"
+        stop_concurrent
+        restore_band
+        log "并发模式热点已关闭（保持关闭，直到重新开启）"
+        result true "热点已关闭，并保持关闭（Wi-Fi 频段偏好已恢复）"
+        ;;
+    esac
+}
+
+do_mode(){
+    local m="${1:-}"
+    case "$m" in concurrent|normal) ;; *) log "模式必须是 concurrent 或 normal"; return 2;; esac
+    # 切换模式时先停两套、并临时置 disabled 防止服务自己又起来
+    touch "$DISABLED"
+    stop_normal
+    stop_concurrent
+    if grep -q '^MODE=' "$CONF" 2>/dev/null; then
+        sed -i "s/^MODE=.*/MODE=$m/" "$CONF"
+    else
+        printf '\nMODE=%s\n' "$m" >> "$CONF"
+    fi
+    MODE="$m"
+    # 模式切换后自启统一关闭（普通模式自启会在开机时断开 Wi-Fi，必须用户显式开启）
+    rm -f "$STATE/autostart-normal"
+    systemctl disable "$UNIT_NORMAL" >/dev/null 2>&1 || true
+    log "已切换到 $m 模式；两套热点机制都已停止，需要时再手动开启；自启已关闭，需要的话请重新打开"
+    result true "已切换到${m}模式；热点已停止；自启已关闭（需重新打开）"
+}
+
+do_autostart(){
+    case "${1:-}" in on|off) ;; *) log "用法: autostart on|off"; return 2;; esac
+    if [ "$1" = on ]; then
+        if [ "$MODE" = normal ]; then
+            systemctl disable "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
+            touch "$STATE/autostart-normal"
+            systemctl enable "$UNIT_NORMAL" >/dev/null 2>&1 || true
+        else
+            rm -f "$STATE/autostart-normal"
+            systemctl disable "$UNIT_NORMAL" >/dev/null 2>&1 || true
+            systemctl enable "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
+        fi
+        log "已启用开机自启（$MODE 模式）"
+        result true "已启用开机自启（$MODE 模式）"
+    else
+        rm -f "$STATE/autostart-normal"
+        systemctl disable "$UNIT_MAIN" "$UNIT_DHCP" "$UNIT_NORMAL" >/dev/null 2>&1 || true
+        log "已关闭开机自启"
+        result true "已关闭开机自启"
+    fi
+}
+
+# ---------- 修改热点名称/密码 ----------
+set_credentials(){
+    local ssid="${1:-}" pass="${2:-}"
+    case "$ssid" in *$'\n'*) log "SSID 不能含换行"; result false "SSID 不能含换行"; return 1;; esac
+    case "$pass" in *$'\n'*) log "密码不能含换行"; result false "密码不能含换行"; return 1;; esac
+    [ -n "$ssid" ] || { log "SSID 不能为空"; result false "SSID 不能为空"; return 1; }
+    [ "${#ssid}" -le 32 ] || { log "SSID 最长 32 个字符"; result false "SSID 最长 32 个字符"; return 1; }
+    if [ -n "$pass" ]; then
+        if [ "${#pass}" -lt 8 ] || [ "${#pass}" -gt 63 ]; then
+            log "密码长度需 8-63 位"; result false "密码长度需 8-63 位"; return 1
+        fi
+    fi
+    local tmp; tmp=$(mktemp) || { result false "无法创建临时文件"; return 1; }
+    cp -a "$CONF" "$tmp" 2>/dev/null || true
+    # 用 awk 重写整行，任意字符（除换行）都安全
+    awk -v s="$ssid" -v p="$pass" '
+        /^SSID=/ { print "SSID=" s; done_ssid=1; next }
+        /^PASS=/ { if (p != "") print "PASS=" p; done_pass=1; next }
+        { print }
+        END {
+            if (!done_ssid) print "SSID=" s
+            if (p != "" && !done_pass) print "PASS=" p
+        }' "$CONF" > "$tmp" 2>/dev/null || { rm -f "$tmp"; result false "写入配置失败"; return 1; }
+    install -m 600 -o root -g root "$tmp" "$CONF"
+    rm -f "$tmp"
+    SSID="$ssid"; [ -n "$pass" ] && PASS="$pass"
+    log "已更新配置：SSID=$ssid$([ -n "$pass" ] && echo "，密码已更新")"
+
+    # 若某个机制正在运行，重启让新配置生效
+    if [ "$MODE" = normal ] && [ "$(normal_running)" = yes ]; then
+        stop_normal
+        do_on >/dev/null 2>&1 || true
+        log "已按新配置重启普通模式热点"
+        result true "已保存并重启热点：SSID=$ssid"
+    elif [ "$(concurrent_running)" = yes ] && [ -n "$(ap0_channel)" ]; then
+        systemctl restart "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
+        log "已按新配置重启并发模式热点（数秒后重新发信标）"
+        result true "已保存并重启热点：SSID=$ssid"
+    else
+        log "热点当前未运行；新配置将在下次开启时生效"
+        result true "已保存：SSID=$ssid（热点未运行，下次开启时生效）"
+    fi
+}
+
+# ---------- JSON 状态 ----------
+jstr(){ printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# 动作类命令向 stdout 输出一行 JSON 结果（人类可读日志仍走 stderr），
+# 插件据此判断成败——不再依赖 exitCode 的类型（executable 引擎里可能是字符串）
+result(){ printf '{"ok":%s,"message":"%s"}\n' "$1" "$(jstr "$2")"; }
+
+do_status(){
+    local it ch freq ssid band conn=no hot=no hch="" hband="" mech=none gw=""
+    it=$(iface_type); ch=$(iface_channel)
+    ssid=$($IW dev "$STA_IF" info 2>/dev/null | awk '/ssid/{print $2; exit}')
+    freq=$($IW dev "$STA_IF" info 2>/dev/null | grep -oE '\([0-9]+ MHz\)' | tr -dc '0-9')
+
+    if [ "$it" = "AP" ]; then
+        # 普通模式：同一网卡就是 AP，没有客户端连接信息
+        conn=no; band=""
+    else
+        if [ -n "${ch:-}" ]; then
+            conn=yes
+            if [ "$ch" -le 14 ] 2>/dev/null; then band=2.4G; else band=5G; fi
+        fi
+    fi
+
+    if [ "$MODE" = normal ]; then
+        if [ "$(normal_running)" = yes ]; then
+            hot=yes; mech=nm; hch=$ch; [ -n "${ch:-}" ] && { if [ "$ch" -le 14 ] 2>/dev/null; then hband=2.4G; else hband=5G; fi; }
+        fi
+    else
+        if [ -n "$(ap0_channel)" ]; then
+            hot=yes; mech=hostapd; hch=$(ap0_channel); hband=2.4G; gw="$AP_IP"
+        elif [ "$(concurrent_running)" = yes ]; then
+            mech=hostapd
+        fi
+    fi
+
+    local disabled=false; [ -e "$DISABLED" ] && disabled=true
+    local clients=0
+    if [ -r /var/lib/misc/dnsmasq.leases ]; then
+        clients=$(grep -c . /var/lib/misc/dnsmasq.leases 2>/dev/null || true)
+        clients=${clients:-0}
+    fi
+
+    printf '{\n'
+    printf '  "mode": "%s",\n' "$MODE"
+    printf '  "disabled": %s,\n' "$disabled"
+    printf '  "autostart": "%s",\n' "$(autostart_state)"
+    printf '  "wifi": {"iface": "%s", "type": "%s", "connected": "%s", "ssid": "%s", "channel": "%s", "freq": "%s", "band": "%s"},\n' \
+        "$STA_IF" "$(jstr "${it:-}")" "$conn" "$(jstr "${ssid:-}")" "${ch:-}" "${freq:-}" "${band:-}"
+    printf '  "hotspot": {"running": "%s", "mechanism": "%s", "ssid": "%s", "channel": "%s", "band": "%s", "gateway": "%s", "clients": %s},\n' \
+        "$hot" "$mech" "$(jstr "$SSID")" "${hch:-}" "${hband:-}" "${gw:-}" "$clients"
+    printf '  "concurrent_service_active": "%s",\n' "$(concurrent_running)"
+    printf '  "normal_service_active": "%s"\n' "$(normal_running)"
+    printf '}\n'
+}
+
+# ---------- 入口 ----------
+case "${1:-}" in
+  on)        do_on ;;
+  off)       do_off ;;
+  mode)      do_mode "${2:-}" ;;
+  autostart) do_autostart "${2:-}" ;;
+  set-credentials) set_credentials "${2:-}" "${3:-}" ;;
+  status)    do_status ;;
+  *) cat >&2 <<EOF
+用法: zcode-hotspot-ctl <命令>
+  on                     按当前模式开启热点
+  off                    关闭热点
+  mode concurrent|normal 切换模式（会先停掉两套机制）
+  autostart on|off       开机自启
+  set-credentials SSID [PASS]   修改热点名称/密码（PASS 省略则只改名称）
+  status --json          状态 JSON
+EOF
+     exit 2 ;;
+esac

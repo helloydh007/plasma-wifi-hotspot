@@ -9,12 +9,8 @@ echo "== 1) 部署后端（会弹一次授权框）=="
 pkexec bash "$SRC/backend/deploy.sh"
 
 echo
-echo "== 2) 把后端副本放进插件包（供插件内“一键修复”使用）=="
-install -d -m 755 "$SRC/plasmoid/contents/backend"
-install -m 755 "$SRC/backend/zcode-hotspot-ctl" "$SRC/backend/zcode-hotspot.sh" \
-               "$SRC/backend/deploy.sh" "$SRC/plasmoid/contents/backend/"
-install -m 644 "$SRC"/backend/*.service "$SRC"/backend/*.policy "$SRC"/backend/*.rules \
-               "$SRC"/backend/*.desktop "$SRC"/backend/config.example "$SRC/plasmoid/contents/backend/"
+echo "== 2) 同步后端副本进插件包（供插件内“一键修复”）=="
+bash "$SRC/sync-backend.sh"
 
 echo
 echo "== 3) 安装 Plasma 插件（用户级，无需 root）=="

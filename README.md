@@ -100,7 +100,8 @@ pkexec /usr/local/sbin/zcode-hotspot-ctl set-credentials <SSID> [<新密码>]
 | `backend/zcode-hotspot.sh` | 并发模式监督循环：跟随 Wi-Fi 信道起停 hostapd；遵守"保持关闭"标记 |
 | `backend/zcode-hotspot{,-dhcp,-normal}.service` | systemd 单元（后者是普通模式的开机自启） |
 | `backend/org.zcode.hotspotctl.policy` + `49-zcode-hotspot.rules` | polkit 动作与规则 |
-| `backend/deploy.sh` | 部署后端（root）；插件包里也带一份，供插件内"一键修复"使用 |
+| `sync-backend.sh` | 把 `backend/` 同步进插件包（两处必须一致；改完 backend 记得跑一次） |
+| `backend/deploy.sh` | 部署后端（root）；插件包内也带一份（`plasmoid/contents/backend/`），供插件内"一键修复"使用 |
 | `backend/org.zcode.hotspot.desktop` | 桌面入口（`plasmawindowed org.zcode.hotspot`） |
 
 ## 安全
