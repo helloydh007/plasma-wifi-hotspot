@@ -204,6 +204,12 @@ systemctl --user restart plasma-plasmashell
 - 只想卸插件、保留后端（继续用命令行 `pkexec …/kde-hotspot-ctl` 控制）的话，只执行第 4 步即可
 - polkit 规则删除后即恢复默认行为：任何 `pkexec` 调用重新弹密码
 
+## 参考与致谢
+
+- **[linux-wifi-hotspot](https://github.com/lakinduakash/linux-wifi-hotspot)**（lakinduakash）——本项目并发模式的信道原则即搬迁自它的 create_ap 后端："热点跟随 Wi-Fi 客户端当前信道、不改动 STA 的频段"。它提供的 [iwlwifi-lar-disable](https://github.com/lakinduakash/linux-wifi-hotspot/tree/master/util/iwlwifi-lar-disable) 工具（DKMS 给 iwlmvm 加回 `lar_disable=1`）也是在 Intel 网卡上解锁 5GHz 并发热点的参考方案
+- **[oblique/create_ap](https://github.com/oblique/create_ap)** —— 上述后端的原始上游，hostapd + dnsmasq + iptables 这套经典组合的出处
+- **[KDE plasma-nm](https://github.com/KDE/plasma-nm)** —— 本项目"普通模式"使用的 NetworkManager 原生热点能力即来自 plasma-nm 所管理的 NM
+
 ## English summary
 
 A Plasma 6 system-tray applet + root backend to toggle a Wi-Fi hotspot, in two modes:

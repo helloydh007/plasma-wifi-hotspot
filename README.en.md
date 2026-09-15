@@ -101,6 +101,12 @@ Action commands print one JSON line (`{"ok":true,"message":"…"}`) on stdout �
 
 See the Chinese README (卸载) for the full script; in short: stop/disable the three `kde-hotspot*` systemd units, remove the backend files (`/usr/local/sbin/kde-hotspot-ctl`, `/usr/local/sbin/kde-hotspot.sh`, the units, the polkit policy + rule, the NetworkManager `conf.d` file, `/etc/kde-hotspot`, `/var/lib/kde-hotspot`), clean up the `ap0` interface and the `kde-hotspot-normal` NM profile if present, then `kpackagetool6 -t Plasma/Applet -r org.kde.hotspot` and remove `~/.local/share/applications/org.kde.hotspot.desktop`.
 
+## Acknowledgments
+
+- **[linux-wifi-hotspot](https://github.com/lakinduakash/linux-wifi-hotspot)** — the channel principle of our concurrent mode ("hotspot follows the Wi-Fi client's current channel, never touching the client's band") was ported from its create_ap backend; its [iwlwifi-lar-disable](https://github.com/lakinduakash/linux-wifi-hotspot/tree/master/util/iwlwifi-lar-disable) utility is also the reference path to unlock 5 GHz concurrent hotspots on Intel NICs
+- **[oblique/create_ap](https://github.com/oblique/create_ap)** — the original upstream of that backend (the classic hostapd + dnsmasq + iptables combo)
+- **[KDE plasma-nm](https://github.com/KDE/plasma-nm)** — our normal mode builds on the NetworkManager native hotspot managed by plasma-nm
+
 ## License
 
 GPL-2.0-or-later (see `LICENSE`).
