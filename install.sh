@@ -26,6 +26,11 @@ install -m 644 "$SRC/backend/org.zcode.hotspot.desktop" "$HOME/.local/share/appl
 kbuildsycoca6 --noincremental >/dev/null 2>&1 || true
 
 echo
+echo "== 5) 重启 plasmashell 加载新插件 =="
+echo "   （plasmashell 会把插件 QML 缓存在内存里，不重启的话托盘仍在跑旧界面）"
+systemctl --user restart plasma-plasmashell.service 2>/dev/null && echo "   已重启" || echo "   重启失败，请手动执行: systemctl --user restart plasma-plasmashell"
+
+echo
 cat <<'TXT'
 完成。接下来：
   1) 编辑 /etc/zcode-hotspot/config，把 SSID/PASS 改成你自己的
