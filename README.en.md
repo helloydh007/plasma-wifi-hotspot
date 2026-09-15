@@ -6,6 +6,16 @@ A Plasma 6 system-tray applet + privileged backend to switch a Wi-Fi hotspot on/
 
 Developed and tested on **Debian 13 + KDE Plasma 6.3 (Intel AX201 / iwlwifi)**.
 
+## Motivation
+
+Windows' Mobile Hotspot can run **while the same Wi-Fi adapter stays connected to a network** —
+one radio, online and sharing at the same time. The Linux desktop has no such experience out of the
+box (NetworkManager's hotspot kicks the client off). This project exists to bring that Windows
+capability to Linux: **run a hotspot without giving up the Wi-Fi connection or plugging in a cable**.
+It does so with the concurrent mode (hostapd on a virtual `ap0` interface), while keeping the more
+portable normal mode (NetworkManager native hotspot, Wi-Fi disconnected) as a fallback. See the
+hardware constraints below for why concurrent mode is limited to 2.4 GHz on one channel here.
+
 ![Plugin UI](docs/screenshot.png)
 
 ## Features
