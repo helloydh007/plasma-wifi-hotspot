@@ -14,7 +14,7 @@ bash "$SRC/sync-backend.sh"
 
 echo
 echo "== 3) 安装 Plasma 插件（用户级，无需 root）=="
-if kpackagetool6 -t Plasma/Applet -l 2>/dev/null | grep -qx 'org.zcode.hotspot'; then
+if kpackagetool6 -t Plasma/Applet -l 2>/dev/null | grep -qx 'org.kde.hotspot'; then
     kpackagetool6 -t Plasma/Applet -u "$SRC/plasmoid"
 else
     kpackagetool6 -t Plasma/Applet -i "$SRC/plasmoid"
@@ -22,7 +22,7 @@ fi
 
 echo
 echo "== 4) 安装桌面入口 =="
-install -m 644 "$SRC/backend/org.zcode.hotspot.desktop" "$HOME/.local/share/applications/"
+install -m 644 "$SRC/backend/org.kde.hotspot.desktop" "$HOME/.local/share/applications/"
 kbuildsycoca6 --noincremental >/dev/null 2>&1 || true
 
 echo
@@ -33,7 +33,7 @@ systemctl --user restart plasma-plasmashell.service 2>/dev/null && echo "   已�
 echo
 cat <<'TXT'
 完成。接下来：
-  1) 编辑 /etc/zcode-hotspot/config，把 SSID/PASS 改成你自己的
+  1) 编辑 /etc/kde-hotspot/config，把 SSID/PASS 改成你自己的
      （未设置时后端会拒绝启动热点，不会用默认密码）
   2) 把插件放进托盘：右键面板 → 系统托盘设置 → 条目 → 勾选“Wi-Fi 热点控制”
      或者直接把它拖到面板上（面板上会显示频段/信道文字）

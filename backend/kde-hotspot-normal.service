@@ -2,11 +2,11 @@
 Description=开机开启普通模式热点（仅当 MODE=normal 且已启用自启时生效）
 After=NetworkManager.service
 Wants=NetworkManager.service
-ConditionPathExists=/var/lib/zcode-hotspot/autostart-normal
+ConditionPathExists=/var/lib/kde-hotspot/autostart-normal
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/zcode-hotspot-ctl on
+ExecStart=/usr/local/sbin/kde-hotspot-ctl on
 TimeoutStartSec=60
 
 [Install]

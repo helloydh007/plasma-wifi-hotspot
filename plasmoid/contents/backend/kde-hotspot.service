@@ -5,7 +5,7 @@ Wants=NetworkManager.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/sbin/zcode-hotspot.sh
+ExecStart=/usr/local/sbin/kde-hotspot.sh
 Restart=on-failure
 RestartSec=8
 StartLimitIntervalSec=0

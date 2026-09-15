@@ -3,11 +3,11 @@
 # polkit 动作带 exec.path 注解，授权只能执行本脚本）
 #
 # 用法:
-#   zcode-hotspot-ctl on            按当前模式开启热点
-#   zcode-hotspot-ctl off           关闭热点
-#   zcode-hotspot-ctl mode M        切换模式: concurrent | normal
-#   zcode-hotspot-ctl autostart on|off
-#   zcode-hotspot-ctl status --json 输出状态 JSON（只读）
+#   kde-hotspot-ctl on            按当前模式开启热点
+#   kde-hotspot-ctl off           关闭热点
+#   kde-hotspot-ctl mode M        切换模式: concurrent | normal
+#   kde-hotspot-ctl autostart on|off
+#   kde-hotspot-ctl status --json 输出状态 JSON（只读）
 #
 # 两种模式:
 #   concurrent  并发模式: hostapd + 虚拟 ap0，Wi-Fi 客户端保持连接（受限于同信道）
@@ -16,16 +16,16 @@ set -u
 # 状态/备份文件一律收紧（band.backup 等虽无密码，保持一致的最小权限）
 umask 077
 
-CONF=/etc/zcode-hotspot/config
-STATE=/var/lib/zcode-hotspot
+CONF=/etc/kde-hotspot/config
+STATE=/var/lib/kde-hotspot
 DISABLED="$STATE/disabled"
 BANDBACKUP="$STATE/band.backup"
 CONNBACKUP="$STATE/band.conn"
 STABACKUP="$STATE/sta-conn.backup"
-NM_AP_CON=zcode-hotspot-normal
-UNIT_MAIN=zcode-hotspot.service
-UNIT_DHCP=zcode-hotspot-dhcp.service
-UNIT_NORMAL=zcode-hotspot-normal.service
+NM_AP_CON=kde-hotspot-normal
+UNIT_MAIN=kde-hotspot.service
+UNIT_DHCP=kde-hotspot-dhcp.service
+UNIT_NORMAL=kde-hotspot-normal.service
 
 IW=/usr/sbin/iw
 NMCLI=/usr/bin/nmcli
@@ -114,7 +114,7 @@ restore_band(){
 # ---------- on / off ----------
 do_on(){
     if [ -z "${SSID:-}" ] || [ "${#PASS}" -lt 8 ]; then
-        log "错误：请先在 /etc/zcode-hotspot/config 里设置 SSID 与 PASS（密码至少 8 位）"
+        log "错误：请先在 /etc/kde-hotspot/config 里设置 SSID 与 PASS（密码至少 8 位）"
         result false "请先设置 SSID 与 PASS（密码至少 8 位）"
         return 1
     fi
@@ -149,8 +149,8 @@ do_on(){
         systemctl start "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
         sleep 1
         if ! systemctl is-active --quiet "$UNIT_MAIN"; then
-            log "并发模式服务启动失败，见 journalctl -u zcode-hotspot"
-            result false "服务启动失败，见 journalctl -u zcode-hotspot"
+            log "并发模式服务启动失败，见 journalctl -u kde-hotspot"
+            result false "服务启动失败，见 journalctl -u kde-hotspot"
             return 1
         fi
         log "并发模式已开启（热点将跟随 Wi-Fi 信道在 2.4GHz 起信标）"
@@ -317,8 +317,8 @@ do_status(){
     printf '  "autostart": "%s",\n' "$(autostart_state)"
     printf '  "wifi": {"iface": "%s", "type": "%s", "connected": "%s", "ssid": "%s", "channel": "%s", "freq": "%s", "band": "%s"},\n' \
         "$STA_IF" "$(jstr "${it:-}")" "$conn" "$(jstr "${ssid:-}")" "${ch:-}" "${freq:-}" "${band:-}"
-    printf '  "hotspot": {"running": "%s", "mechanism": "%s", "ssid": "%s", "channel": "%s", "band": "%s", "gateway": "%s", "clients": %s},\n' \
-        "$hot" "$mech" "$(jstr "$SSID")" "${hch:-}" "${hband:-}" "${gw:-}" "$clients"
+    printf '  "hotspot": {"running": "%s", "mechanism": "%s", "ssid": "%s", "pass": "%s", "channel": "%s", "band": "%s", "gateway": "%s", "clients": %s},\n' \
+        "$hot" "$mech" "$(jstr "$SSID")" "$(jstr "$PASS")" "${hch:-}" "${hband:-}" "${gw:-}" "$clients"
     printf '  "concurrent_service_active": "%s",\n' "$(concurrent_running)"
     printf '  "normal_service_active": "%s"\n' "$(normal_running)"
     printf '}\n'
@@ -333,7 +333,7 @@ case "${1:-}" in
   set-credentials) set_credentials "${2:-}" "${3:-}" ;;
   status)    do_status ;;
   *) cat >&2 <<EOF
-用法: zcode-hotspot-ctl <命令>
+用法: kde-hotspot-ctl <命令>
   on                     按当前模式开启热点
   off                    关闭热点
   mode concurrent|normal 切换模式（会先停掉两套机制）

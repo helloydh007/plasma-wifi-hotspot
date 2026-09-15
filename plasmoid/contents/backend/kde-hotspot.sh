@@ -8,13 +8,13 @@
 #
 # 状态机：等 STA 进 2.4GHz → 起热点 → 盯着 STA；STA 离开该信道/断开 → 停热点 → 回去等。
 #
-# 开关控制（由 zcode-hotspot-ctl 写入）：
-#  - /var/lib/zcode-hotspot/disabled 存在  → 不启动热点（"保持关闭"）
-#  - /etc/zcode-hotspot/config 里 MODE=normal → 本脚本让位（普通模式由 NetworkManager 负责）
+# 开关控制（由 kde-hotspot-ctl 写入）：
+#  - /var/lib/kde-hotspot/disabled 存在  → 不启动热点（"保持关闭"）
+#  - /etc/kde-hotspot/config 里 MODE=normal → 本脚本让位（普通模式由 NetworkManager 负责）
 set -u
 # hostapd.conf 里有密码，默认权限收紧到 600
 umask 077
-CONF=/etc/zcode-hotspot/config
+CONF=/etc/kde-hotspot/config
 [ -r "$CONF" ] && . "$CONF"
 STA_IF=${STA_IF:-wlp0s20f3}
 AP_IF=${AP_IF:-ap0}
@@ -23,13 +23,13 @@ AP_NET=${AP_NET:-10.233.33.0/24}
 SSID=${SSID:-}
 PASS=${PASS:-}
 MODE=${MODE:-concurrent}
-STATE=/var/lib/zcode-hotspot
+STATE=/var/lib/kde-hotspot
 DISABLED="$STATE/disabled"
-RUN=/run/zcode-hotspot
+RUN=/run/kde-hotspot
 IW=/usr/sbin/iw
 IPT=/usr/sbin/iptables
 
-log(){ echo "[zcode-hotspot] $*"; }
+log(){ echo "[kde-hotspot] $*"; }
 mkdir -p "$RUN" "$STATE"
 
 sta_channel() {

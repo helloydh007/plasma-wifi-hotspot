@@ -1,10 +1,10 @@
 // 允许本机活动会话中 sudo/netdev 组的成员免密码执行热点控制脚本。
 // 授权范围由动作注解 org.freedesktop.policykit.exec.path 限定为
-// /usr/local/sbin/zcode-hotspot-ctl 这一个脚本，不能用于任意命令。
+// /usr/local/sbin/kde-hotspot-ctl 这一个脚本，不能用于任意命令。
 //
 // 撤销：删除本文件（或改成 polkit.Result.AUTH_ADMIN_KEEP）即可恢复"每次弹密码"。
 polkit.addRule(function(action, subject) {
-    if (action.id == "org.zcode.hotspotctl.run" &&
+    if (action.id == "org.kde.hotspotctl.run" &&
         subject.local && subject.active &&
         (subject.isInGroup("sudo") || subject.isInGroup("netdev"))) {
         return polkit.Result.YES;

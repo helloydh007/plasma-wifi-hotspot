@@ -7,7 +7,7 @@ PlasmoidItem {
     id: root
 
     // 后端控制入口（polkit 规则已授权免密码）
-    readonly property string ctl: "/usr/local/sbin/zcode-hotspot-ctl"
+    readonly property string ctl: "/usr/local/sbin/kde-hotspot-ctl"
 
     // 状态
     property var st: ({})
@@ -28,6 +28,8 @@ PlasmoidItem {
     readonly property string autostartState: st.autostart ? st.autostart : "off"
     readonly property int clients: (st.hotspot && st.hotspot.clients) ? st.hotspot.clients : 0
     readonly property string hotspotSsid: (st.hotspot && st.hotspot.ssid) ? st.hotspot.ssid : ""
+    readonly property string hotspotPass: (st.hotspot && st.hotspot.pass) ? st.hotspot.pass : ""
+    property bool showPass: false
 
     readonly property string stateText: !ready ? "后端不可用" : (isOff ? "已关闭" : (hotRunning ? "运行中" : "待命"))
     readonly property string bandText: hotRunning
@@ -46,8 +48,8 @@ PlasmoidItem {
         return out
     }
     readonly property bool backendMissing: {
-        var f = ["/usr/local/sbin/zcode-hotspot-ctl", "/usr/local/sbin/zcode-hotspot.sh",
-                 "/etc/systemd/system/zcode-hotspot.service"]
+        var f = ["/usr/local/sbin/kde-hotspot-ctl", "/usr/local/sbin/kde-hotspot.sh",
+                 "/etc/systemd/system/kde-hotspot.service"]
         for (var i = 0; i < f.length; i++) {
             for (var j = 0; j < missingDeps.length; j++) if (missingDeps[j].path === f[i]) return true
         }
@@ -78,18 +80,18 @@ PlasmoidItem {
         "/usr/sbin/dnsmasq",
         "/usr/sbin/iw",
         "/usr/sbin/iptables",
-        "/usr/local/sbin/zcode-hotspot.sh",
-        "/usr/local/sbin/zcode-hotspot-ctl",
-        "/etc/zcode-hotspot/config",
-        "/etc/zcode-hotspot/dnsmasq.conf",
-        "/etc/systemd/system/zcode-hotspot.service",
-        "/etc/systemd/system/zcode-hotspot-dhcp.service",
-        "/usr/share/polkit-1/actions/org.zcode.hotspotctl.policy",
-        "/etc/NetworkManager/conf.d/99-zcode-hotspot-ap0.conf"
+        "/usr/local/sbin/kde-hotspot.sh",
+        "/usr/local/sbin/kde-hotspot-ctl",
+        "/etc/kde-hotspot/config",
+        "/etc/kde-hotspot/dnsmasq.conf",
+        "/etc/systemd/system/kde-hotspot.service",
+        "/etc/systemd/system/kde-hotspot-dhcp.service",
+        "/usr/share/polkit-1/actions/org.kde.hotspotctl.policy",
+        "/etc/NetworkManager/conf.d/99-kde-hotspot-ap0.conf"
     ]
     readonly property string depsCmd: "sh -c 'for p in " + depsPaths.join(" ")
         + "; do if [ -e $p ]; then echo OK $p; else echo MISS $p; fi; done; "
-        + "if pkcheck --action-id org.zcode.hotspotctl.run --process $$ >/dev/null 2>&1; "
+        + "if pkcheck --action-id org.kde.hotspotctl.run --process $$ >/dev/null 2>&1; "
         + "then echo OK polkit-免密授权; else echo MISS polkit-免密授权; fi'"
 
     // ---------- 数据源 ----------
@@ -143,7 +145,7 @@ PlasmoidItem {
             }
             if (!msg) {
                 msg = (data.stderr || "").trim().split("\n").pop()
-                    || (ok ? "已完成" : "见 journalctl -u zcode-hotspot")
+                    || (ok ? "已完成" : "见 journalctl -u kde-hotspot")
             }
             root.message = (ok ? "" : "失败：") + msg
             Qt.callLater(() => { actionSource.disconnectSource(sourceName) })

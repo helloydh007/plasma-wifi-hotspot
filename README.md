@@ -2,6 +2,8 @@
 
 Plasma 6 系统托盘插件 + 后端服务，用来一键开关 Wi-Fi 热点，并支持两种截然不同的模式。
 
+**English documentation: [README.en.md](README.en.md)**（英文简介页，中文为主文档）
+
 ![插件界面](docs/screenshot.png)
 
 在 Debian 13 + KDE Plasma 6.3（Intel AX201 / iwlwifi）上开发并实测通过。
@@ -81,7 +83,7 @@ bash install.sh
 
 装完两步收尾：
 
-1. 编辑 `/etc/zcode-hotspot/config`（权限 600），把 `SSID` / `PASS` 改成你自己的。
+1. 编辑 `/etc/kde-hotspot/config`（权限 600），把 `SSID` / `PASS` 改成你自己的。
    **未设置时后端拒绝启动热点**，不会用默认密码起热点。
 2. 把插件放进托盘：右键面板 → 系统托盘设置 → 条目 → 勾选"Wi-Fi 热点控制"；
    或者直接拖到面板上（放在面板上会额外显示频段/信道文字，托盘里只显示图标）。
@@ -108,19 +110,19 @@ bash install.sh     # 它会同步后端、更新插件，并重启 plasmashell
 安装脚本会在 `~/.local/share/applications/` 放一个桌面入口，三种打开方式：
 
 1. **应用菜单**：打开开始菜单，在"网络"分类里找 **Wi-Fi 热点控制**（KRunner 里按 Alt+Space 搜"热点"也行）
-2. 命令行：`gtk-launch org.zcode.hotspot`
-3. 直接跑：`plasmawindowed org.zcode.hotspot`
+2. 命令行：`gtk-launch org.kde.hotspot`
+3. 直接跑：`plasmawindowed org.kde.hotspot`
 
 打开的就是插件面板的独立窗口（和托盘弹出的是同一套界面）。想放到桌面或面板上做快捷方式：把这个 `.desktop` 文件复制到 `~/Desktop/` 或拖到面板即可。
 
 命令行等价物（无需 sudo，polkit 已授权）：
 
 ```bash
-pkexec /usr/local/sbin/zcode-hotspot-ctl status          # 状态 JSON
-pkexec /usr/local/sbin/zcode-hotspot-ctl on|off          # 按当前模式开关
-pkexec /usr/local/sbin/zcode-hotspot-ctl mode concurrent|normal
-pkexec /usr/local/sbin/zcode-hotspot-ctl autostart on|off
-pkexec /usr/local/sbin/zcode-hotspot-ctl set-credentials <SSID> [<新密码>]
+pkexec /usr/local/sbin/kde-hotspot-ctl status          # 状态 JSON
+pkexec /usr/local/sbin/kde-hotspot-ctl on|off          # 按当前模式开关
+pkexec /usr/local/sbin/kde-hotspot-ctl mode concurrent|normal
+pkexec /usr/local/sbin/kde-hotspot-ctl autostart on|off
+pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> [<新密码>]
 ```
 
 动作类命令会在 stdout 输出一行 JSON（`{"ok":true,"message":"…"}`），人类可读日志走 stderr——
@@ -129,7 +131,7 @@ pkexec /usr/local/sbin/zcode-hotspot-ctl set-credentials <SSID> [<新密码>]
 ## 架构
 
 ```
-[ Plasma 插件（用户） ] --pkexec(免密码)--> [ zcode-hotspot-ctl（root） ]
+[ Plasma 插件（用户） ] --pkexec(免密码)--> [ kde-hotspot-ctl（root） ]
         |                                            |
         +-- 只读状态：直接跑 iw/nmcli/systemctl        +-- 两套热点机制的启停与互斥
             （不需要特权）                              +-- nmcli 切频段 / NM 热点
@@ -139,19 +141,20 @@ pkexec /usr/local/sbin/zcode-hotspot-ctl set-credentials <SSID> [<新密码>]
 | 文件 | 作用 |
 |---|---|
 | `plasmoid/` | Plasma 6 插件包（`kpackagetool6 -t Plasma/Applet -i plasmoid`） |
-| `backend/zcode-hotspot-ctl` | **唯一的特权入口**：on/off/mode/autostart/set-credentials/status |
-| `backend/zcode-hotspot.sh` | 并发模式监督循环：跟随 Wi-Fi 信道起停 hostapd；遵守"保持关闭"标记 |
-| `backend/zcode-hotspot{,-dhcp,-normal}.service` | systemd 单元（后者是普通模式的开机自启） |
-| `backend/org.zcode.hotspotctl.policy` + `49-zcode-hotspot.rules` | polkit 动作与规则 |
+| `backend/kde-hotspot-ctl` | **唯一的特权入口**：on/off/mode/autostart/set-credentials/status |
+| `backend/kde-hotspot.sh` | 并发模式监督循环：跟随 Wi-Fi 信道起停 hostapd；遵守"保持关闭"标记 |
+| `backend/kde-hotspot{,-dhcp,-normal}.service` | systemd 单元（后者是普通模式的开机自启） |
+| `backend/org.kde.hotspotctl.policy` + `49-kde-hotspot.rules` | polkit 动作与规则 |
 | `sync-backend.sh` | 把 `backend/` 同步进插件包（两处必须一致；改完 backend 记得跑一次） |
 | `backend/deploy.sh` | 部署后端（root）；插件包内也带一份（`plasmoid/contents/backend/`），供插件内"一键修复"使用 |
-| `backend/org.zcode.hotspot.desktop` | 桌面入口（`plasmawindowed org.zcode.hotspot`） |
+| `backend/org.kde.hotspot.desktop` | 桌面入口（`plasmawindowed org.kde.hotspot`） |
 
 ## 安全
 
-- polkit 授权**只作用于 `/usr/local/sbin/zcode-hotspot-ctl` 这一个脚本**（动作带 `org.freedesktop.policykit.exec.path` 注解），不能拿来执行任意命令。删除 `/etc/polkit-1/rules.d/49-zcode-hotspot.rules` 即恢复成"每次弹密码"。
+- polkit 授权**只作用于 `/usr/local/sbin/kde-hotspot-ctl` 这一个脚本**（动作带 `org.freedesktop.policykit.exec.path` 注解），不能拿来执行任意命令。删除 `/etc/polkit-1/rules.d/49-kde-hotspot.rules` 即恢复成"每次弹密码"。
 - **包安装刻意不在免密范围内**：否则等于"任何用户进程都能免密装包"。所以插件里的依赖修复给的是可复制的命令。
-- 热点密码保存在 `/etc/zcode-hotspot/config`（权限 600，仅 root 可读）。脚本不再内置任何默认密码，配置缺失时拒绝启动。
+- 热点密码保存在 `/etc/kde-hotspot/config`（权限 600，仅 root 可读）。脚本不内置任何默认密码，配置缺失时拒绝启动。
+  `status` 的 JSON 里包含当前热点名称与密码（面板"当前密码"行默认打码，点眼睛图标显示）——这是授权给本机用户的功能；多人共用的机器上如不接受，删掉 `do_status` 里的 `pass` 字段即可。
 - 后端服务以 root 运行是必需的（hostapd/dnsmasq/iptables 都需要特权）。
 
 ## 卸载
@@ -160,34 +163,34 @@ pkexec /usr/local/sbin/zcode-hotspot-ctl set-credentials <SSID> [<新密码>]
 
 ```bash
 # 1) 停止并禁用后端服务（热点开着的话会一并停掉）
-sudo systemctl disable --now zcode-hotspot zcode-hotspot-dhcp zcode-hotspot-normal
+sudo systemctl disable --now kde-hotspot kde-hotspot-dhcp kde-hotspot-normal
 
 # 2) 删除后端文件（控制脚本、systemd 单元、polkit、NM 的 ap0 配置）
-sudo rm -f /etc/systemd/system/zcode-hotspot.service \
-           /etc/systemd/system/zcode-hotspot-dhcp.service \
-           /etc/systemd/system/zcode-hotspot-normal.service \
-           /usr/local/sbin/zcode-hotspot-ctl \
-           /usr/local/sbin/zcode-hotspot.sh \
-           /usr/share/polkit-1/actions/org.zcode.hotspotctl.policy \
-           /etc/polkit-1/rules.d/49-zcode-hotspot.rules \
-           /etc/NetworkManager/conf.d/99-zcode-hotspot-ap0.conf
-sudo rm -rf /etc/zcode-hotspot /var/lib/zcode-hotspot
+sudo rm -f /etc/systemd/system/kde-hotspot.service \
+           /etc/systemd/system/kde-hotspot-dhcp.service \
+           /etc/systemd/system/kde-hotspot-normal.service \
+           /usr/local/sbin/kde-hotspot-ctl \
+           /usr/local/sbin/kde-hotspot.sh \
+           /usr/share/polkit-1/actions/org.kde.hotspotctl.policy \
+           /etc/polkit-1/rules.d/49-kde-hotspot.rules \
+           /etc/NetworkManager/conf.d/99-kde-hotspot-ap0.conf
+sudo rm -rf /etc/kde-hotspot /var/lib/kde-hotspot
 sudo systemctl daemon-reload && sudo nmcli general reload
 
 # 3) 清理可能残留的虚拟接口与普通模式 NM profile（不存在会自动跳过）
 sudo ip link delete ap0 2>/dev/null || true
-nmcli connection delete zcode-hotspot-normal 2>/dev/null || true
+nmcli connection delete kde-hotspot-normal 2>/dev/null || true
 
 # 4) 卸载插件与桌面入口（用户级，无需 root），重启 plasmashell 让托盘图标立刻消失
-kpackagetool6 -t Plasma/Applet -r org.zcode.hotspot
-rm -f ~/.local/share/applications/org.zcode.hotspot.desktop
+kpackagetool6 -t Plasma/Applet -r org.kde.hotspot
+rm -f ~/.local/share/applications/org.kde.hotspot.desktop
 systemctl --user restart plasma-plasmashell
 ```
 
 说明：
 
-- `/var/lib/zcode-hotspot` 里只有状态标记和频段备份（无密码）；`/etc/zcode-hotspot/config` 里存着热点名称/密码（600），删掉即彻底清除
-- 只想卸插件、保留后端（继续用命令行 `pkexec …/zcode-hotspot-ctl` 控制）的话，只执行第 4 步即可
+- `/var/lib/kde-hotspot` 里只有状态标记和频段备份（无密码）；`/etc/kde-hotspot/config` 里存着热点名称/密码（600），删掉即彻底清除
+- 只想卸插件、保留后端（继续用命令行 `pkexec …/kde-hotspot-ctl` 控制）的话，只执行第 4 步即可
 - polkit 规则删除后即恢复默认行为：任何 `pkexec` 调用重新弹密码
 
 ## English summary

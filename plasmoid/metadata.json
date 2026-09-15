@@ -1,7 +1,7 @@
 {
     "KPackageStructure": "Plasma/Applet",
     "KPlugin": {
-        "Id": "org.zcode.hotspot",
+        "Id": "org.kde.hotspot",
         "Name": "Wi-Fi 热点控制",
         "Name[zh_CN]": "Wi-Fi 热点控制",
         "Description": "开关并发热点/普通热点，显示频段与信道，含依赖自检与开机自启",
@@ -13,7 +13,7 @@
         "Version": "1.0.0",
         "Authors": [
             {
-                "Name": "ZCode"
+                "Name": "KDE"
             }
         ]
     },

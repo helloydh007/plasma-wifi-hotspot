@@ -1,6 +1,6 @@
 # 并发热点配置示例
-# 安装后请复制为 /etc/zcode-hotspot/config 并改成你自己的：
-#   sudo install -m 644 config.example /etc/zcode-hotspot/config
+# 安装后请复制为 /etc/kde-hotspot/config 并改成你自己的：
+#   sudo install -m 644 config.example /etc/kde-hotspot/config
 STA_IF=wlp0s20f3     # 上行 Wi-Fi 接口（用 iw dev 查看）
 AP_IF=ap0            # 虚拟热点接口名
 AP_IP=10.233.33.1    # 热点网关

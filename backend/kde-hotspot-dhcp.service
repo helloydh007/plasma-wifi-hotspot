@@ -1,12 +1,12 @@
 [Unit]
 Description=并发热点 DHCP（dnsmasq on ap0）
-After=zcode-hotspot.service
+After=kde-hotspot.service
 
 [Service]
 # 用 bind-dynamic：ap0 在热点启动时才由主服务创建，dnsmasq 不需要等它，
 # 接口出现时自动开始服务 DHCP（这也是原先 ExecStartPre 死等 ap0 导致启动超时的修复）
 Type=simple
-ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/zcode-hotspot/dnsmasq.conf --pid-file=
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/kde-hotspot/dnsmasq.conf --pid-file=
 Restart=on-failure
 RestartSec=5
 StartLimitIntervalSec=0

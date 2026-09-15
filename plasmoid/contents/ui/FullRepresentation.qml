@@ -160,6 +160,26 @@ QQC2.ScrollView {
             opacity: 0.7
             font.pointSize: Kirigami.Theme.smallFont.pointSize
         }
+        // 当前热点密码：默认打码，点眼睛图标显示/隐藏
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.smallSpacing
+            Layout.rightMargin: Kirigami.Units.smallSpacing
+            spacing: Kirigami.Units.smallSpacing
+
+            QQC2.Label { text: "当前密码"; opacity: 0.7 }
+            QQC2.Label {
+                Layout.fillWidth: true
+                text: root.showPass ? (root.hotspotPass.length > 0 ? root.hotspotPass : "（未设置）")
+                                    : "••••••••"
+                wrapMode: Text.WrapAnywhere
+            }
+            QQC2.ToolButton {
+                Accessible.name: root.showPass ? "隐藏密码" : "显示密码"
+                icon.name: root.showPass ? "password-show-on" : "password-show-off"
+                onClicked: root.showPass = !root.showPass
+            }
+        }
         QQC2.TextField {
             id: ssidField
             Layout.fillWidth: true
