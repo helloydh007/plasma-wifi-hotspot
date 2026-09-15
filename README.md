@@ -10,6 +10,7 @@ Plasma 6 系统托盘插件 + 后端服务，用来一键开关 Wi-Fi 热点，�
 
 - **两种模式**：并发模式（保持 Wi-Fi 连接）与普通模式（断开 Wi-Fi，网卡整体做 AP）
 - **托盘图标**反映状态：运行中是热点图标；**未开启时是"热点原图标 + 红色斜线"（仿静音图标样式）**（不与"断网"图标混淆）；鼠标悬停显示热点状态、频段、信道、客户端数
+- **状态自动跟随**：托盘图标/悬浮提示周期刷新（默认 5 秒，右键"配置"可调 2–60 秒），命令行开关、监管脚本自动暂停热点等外部变化也会如实反映
 - 面板里可切换模式、开关热点、**开机自启**开关
 - **修改热点名称与密码**：面板里直接改（运行中的热点会自动重启使新值生效）
 - **依赖自检**：逐项检查 hostapd / dnsmasq / iw / iptables / 后端文件 / polkit 授权，缺失时给出可复制的修复命令
@@ -37,16 +38,48 @@ Plasma 6 系统托盘插件 + 后端服务，用来一键开关 Wi-Fi 热点，�
 
 > 顺带解释了"为什么 Windows 可以一边连 Wi-Fi 一边开热点"：Windows 的移动热点走 Wi-Fi Direct（P2P-GO），而这张卡的组合规则里 P2P-GO 允许 `#channels <= 2`，可以跨信道；Linux 的 AP 模式没有这条路。
 
-## 安装
+## 依赖
 
-依赖：`hostapd`、`dnsmasq`、`iw`、`iptables`（Debian 13 上 iw/iptables 通常已随系统安装，hostapd/dnsmasq 需要装）。
+**系统环境**（Plasma 桌面自带，无需额外安装）：
+
+| 组件 | 说明 |
+|---|---|
+| KDE Plasma 6 + Qt6 | 插件用 Plasma 6 API（6.3 上开发测试；**Plasma 5 不兼容**） |
+| `kpackagetool6` | 插件安装工具，Plasma 桌面自带 |
+| `org.kde.plasma.plasma5support` | 插件的 executable 数据引擎，Plasma 桌面自带 |
+| NetworkManager + `nmcli` | Wi-Fi 管理；"普通模式"热点由 NM 实现 |
+| polkit / pkexec | 免密码授权体系 |
+| systemd | 后端服务（并发热点 + 普通模式自启） |
+
+**需要安装的系统包**（`iw`、`iptables` 通常已随系统自带，缺哪个装哪个）：
 
 ```bash
-git clone <此仓库> && cd kde-hotspot-control
-bash install.sh        # 部署后端(会弹一次授权框) + 安装插件(用户级) + 安装桌面入口
+sudo apt install hostapd dnsmasq iw iptables
 ```
 
-安装后：
+装不装都不影响插件运行——面板里有**依赖自检**，缺什么会列出来并给出可复制的安装命令，装好点"重新检查"即可。
+
+**硬件**：
+
+- 一块支持 AP 模式的网卡（`iw list` 的 "Supported interface modes" 里有 `AP` 即可；Intel AX201 实测可用）
+- **并发模式**额外要求驱动允许"客户端 + AP"接口组合，且两者必须**同信道**（2.4GHz）——详见下文"硬件前提与已知限制"
+
+## 安装
+
+```bash
+sudo apt install hostapd dnsmasq iw iptables    # 缺哪个装哪个
+git clone <此仓库> && cd kde-hotspot-control
+bash install.sh
+```
+
+`install.sh` 一次做完四件事：
+
+1. **部署后端**（pkexec，会弹一次授权框）：控制脚本、systemd 单元、polkit 动作与规则、NM 的 `ap0` unmanaged 配置
+2. 安装 **Plasma 插件**（用户级 `~/.local/share/plasma/plasmoids/`，不需要 root）
+3. 安装**桌面入口**（应用菜单/KRunner 可搜"Wi-Fi 热点控制"）
+4. **重启 plasmashell**（否则托盘里还跑旧界面）
+
+装完两步收尾：
 
 1. 编辑 `/etc/zcode-hotspot/config`（权限 600），把 `SSID` / `PASS` 改成你自己的。
    **未设置时后端拒绝启动热点**，不会用默认密码起热点。
@@ -123,16 +156,39 @@ pkexec /usr/local/sbin/zcode-hotspot-ctl set-credentials <SSID> [<新密码>]
 
 ## 卸载
 
+> 建议：如果热点正开着，先在插件里点一次"**关闭热点**"（并发模式会借此把 Wi-Fi 频段偏好恢复成 5GHz），再执行下面的命令——最后一步删除的状态目录里存着频段备份，先关再删最稳妥。
+
 ```bash
+# 1) 停止并禁用后端服务（热点开着的话会一并停掉）
 sudo systemctl disable --now zcode-hotspot zcode-hotspot-dhcp zcode-hotspot-normal
-sudo rm /etc/systemd/system/zcode-hotspot*.service /usr/local/sbin/zcode-hotspot{,-ctl}*
+
+# 2) 删除后端文件（控制脚本、systemd 单元、polkit、NM 的 ap0 配置）
+sudo rm -f /etc/systemd/system/zcode-hotspot.service \
+           /etc/systemd/system/zcode-hotspot-dhcp.service \
+           /etc/systemd/system/zcode-hotspot-normal.service \
+           /usr/local/sbin/zcode-hotspot-ctl \
+           /usr/local/sbin/zcode-hotspot.sh \
+           /usr/share/polkit-1/actions/org.zcode.hotspotctl.policy \
+           /etc/polkit-1/rules.d/49-zcode-hotspot.rules \
+           /etc/NetworkManager/conf.d/99-zcode-hotspot-ap0.conf
 sudo rm -rf /etc/zcode-hotspot /var/lib/zcode-hotspot
-sudo rm /usr/share/polkit-1/actions/org.zcode.hotspotctl.policy /etc/polkit-1/rules.d/49-zcode-hotspot.rules
-sudo rm /etc/NetworkManager/conf.d/99-zcode-hotspot-ap0.conf
 sudo systemctl daemon-reload && sudo nmcli general reload
-kpackagetool6 -t Plasma/Applet -r org.zcode.hotspot       # 卸载插件
-rm ~/.local/share/applications/org.zcode.hotspot.desktop  # 移除桌面入口
+
+# 3) 清理可能残留的虚拟接口与普通模式 NM profile（不存在会自动跳过）
+sudo ip link delete ap0 2>/dev/null || true
+nmcli connection delete zcode-hotspot-normal 2>/dev/null || true
+
+# 4) 卸载插件与桌面入口（用户级，无需 root），重启 plasmashell 让托盘图标立刻消失
+kpackagetool6 -t Plasma/Applet -r org.zcode.hotspot
+rm -f ~/.local/share/applications/org.zcode.hotspot.desktop
+systemctl --user restart plasma-plasmashell
 ```
+
+说明：
+
+- `/var/lib/zcode-hotspot` 里只有状态标记和频段备份（无密码）；`/etc/zcode-hotspot/config` 里存着热点名称/密码（600），删掉即彻底清除
+- 只想卸插件、保留后端（继续用命令行 `pkexec …/zcode-hotspot-ctl` 控制）的话，只执行第 4 步即可
+- polkit 规则删除后即恢复默认行为：任何 `pkexec` 调用重新弹密码
 
 ## English summary
 
@@ -141,7 +197,9 @@ A Plasma 6 system-tray applet + root backend to toggle a Wi-Fi hotspot, in two m
 and **normal** (NetworkManager AP mode, which necessarily drops the Wi-Fi client).
 Tested on Debian 13 / Plasma 6.3 / Intel AX201: 5 GHz AP is impossible on this chipset
 (self-managed regulatory domain marks 5 GHz as no-IR), and STA+AP concurrency requires the
-same channel. Install with `bash install.sh`; see the Chinese sections above for details.
+same channel. Install with `bash install.sh` (see 安装 above; dependencies: hostapd, dnsmasq,
+iw, iptables on top of a stock Plasma 6 desktop). To uninstall, follow the 卸载 section —
+it removes the backend, polkit rules, plasmoid and desktop entry.
 
 ## 许可
 

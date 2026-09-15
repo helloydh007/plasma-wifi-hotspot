@@ -48,6 +48,12 @@ else
     echo "  MODE 已存在: $(grep '^MODE=' /etc/zcode-hotspot/config)"
 fi
 
+echo "== 4c) 让 NetworkManager 不接管 ap0（并发模式必需）=="
+install -d -m 755 /etc/NetworkManager/conf.d
+install -m 644 "$SRC/99-zcode-hotspot-ap0.conf" /etc/NetworkManager/conf.d/99-zcode-hotspot-ap0.conf
+nmcli general reload 2>/dev/null || true
+echo "  已安装 /etc/NetworkManager/conf.d/99-zcode-hotspot-ap0.conf"
+
 echo "== 5) 让并发模式服务读到新脚本 =="
 systemctl restart zcode-hotspot.service zcode-hotspot-dhcp.service 2>/dev/null || true
 systemctl is-active zcode-hotspot.service zcode-hotspot-dhcp.service | tr '\n' ' '; echo
