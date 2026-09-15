@@ -31,7 +31,6 @@ MouseArea {
 
         // 热点原图标 + 关闭时的红色斜线（仿托盘静音图标的样式，不变暗）
         Item {
-            clip: true
             implicitWidth: compact.iconSize
             implicitHeight: compact.iconSize
 
@@ -40,11 +39,13 @@ MouseArea {
                 source: root.baseIcon
                 active: compact.containsMouse
             }
+            // Breeze audio-volume-muted 的斜线几何：22px 画布中从 (3,3) 到 (19,19)，
+            // 即长 0.983 倍图标尺寸、粗 1/22，45° 居中，不触及四角
             Rectangle {
                 visible: root.offBadge
                 anchors.centerIn: parent
-                width: parent.width * 1.5
-                height: Math.max(1.2, parent.width * 0.055)
+                width: parent.width * 0.983
+                height: Math.max(1, parent.width * 0.0455)
                 radius: height / 2
                 rotation: 45
                 color: Kirigami.Theme.negativeTextColor

@@ -23,7 +23,6 @@ QQC2.ScrollView {
 
             // 与托盘一致：热点原图标，关闭时加红色斜线（仿静音图标）
             Item {
-                clip: true
                 implicitWidth: Kirigami.Units.iconSizes.medium
                 implicitHeight: Kirigami.Units.iconSizes.medium
                 Kirigami.Icon {
@@ -33,8 +32,8 @@ QQC2.ScrollView {
                 Rectangle {
                     visible: root.offBadge
                     anchors.centerIn: parent
-                    width: parent.width * 1.5
-                    height: Math.max(1.2, parent.width * 0.055)
+                    width: parent.width * 0.983
+                    height: Math.max(1, parent.width * 0.0455)
                     radius: height / 2
                     rotation: 45
                     color: Kirigami.Theme.negativeTextColor
