@@ -8,19 +8,19 @@ Kirigami.FormLayout {
 
     QQC2.CheckBox {
         id: showLabelBox
-        text: "在托盘图标旁显示频段/信道"
+        text: i18n("Show band/channel next to the tray icon")
     }
 
     QQC2.SpinBox {
         id: pollSpin
         from: 2
         to: 60
-        Kirigami.FormData.label: "状态刷新间隔（秒）"
+        Kirigami.FormData.label: i18n("Status refresh interval (seconds)")
     }
 
     QQC2.Label {
         Kirigami.FormData.isSection: true
-        text: "提示：并发模式保持 Wi-Fi 连接（热点在 2.4GHz 同信道）；普通模式会断开 Wi-Fi，把网卡整体当热点用。"
+        text: i18n("Tip: concurrent mode keeps Wi-Fi connected (hotspot on the same 2.4GHz channel); normal mode disconnects Wi-Fi and uses the whole NIC as the hotspot.")
         wrapMode: Text.WordWrap
         opacity: 0.7
     }

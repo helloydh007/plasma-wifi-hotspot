@@ -43,11 +43,12 @@ QQC2.ScrollView {
                 spacing: 0
                 Layout.fillWidth: true
                 QQC2.Label {
-                    text: "热点：" + root.stateText
+                    text: i18n("Hotspot: %1", root.stateText)
                     font.bold: true
                 }
                 QQC2.Label {
-                    text: root.mode === "normal" ? "普通模式（断开 Wi-Fi，网卡当 AP）" : "并发模式（保持 Wi-Fi 连接）"
+                    text: root.mode === "normal" ? i18n("Normal mode (Wi-Fi disconnected, NIC as AP)")
+                                                 : i18n("Concurrent mode (Wi-Fi stays connected)")
                     opacity: 0.7
                     font.pointSize: Kirigami.Theme.smallFont.pointSize
                 }
@@ -65,33 +66,34 @@ QQC2.ScrollView {
             columnSpacing: Kirigami.Units.smallSpacing
             rowSpacing: Kirigami.Units.smallSpacing
 
-            QQC2.Label { text: "Wi-Fi"; opacity: 0.7 }
+            QQC2.Label { text: i18nc("@label wifi row", "Wi-Fi"); opacity: 0.7 }
             QQC2.Label {
                 Layout.fillWidth: true
                 text: {
                     // 按实际连接状态显示，而不是按模式（普通模式下 Wi-Fi 也可能已连接）
                     var connected = (root.st.wifi && root.st.wifi.connected === "yes")
                     if (!connected) {
-                        return root.mode === "normal" ? "未连接（普通模式占用网卡时需断开）" : "未连接"
+                        return root.mode === "normal" ? i18n("Not connected (normal mode occupies the NIC)")
+                                                      : i18n("Not connected")
                     }
                     return root.wifiSsid + (root.wifiBand ? "　" + root.wifiBand + (root.wifiCh ? " ch" + root.wifiCh : "") : "")
                 }
             }
 
-            QQC2.Label { text: "热点"; opacity: 0.7 }
+            QQC2.Label { text: i18n("Hotspot"); opacity: 0.7 }
             QQC2.Label {
                 Layout.fillWidth: true
                 text: {
-                    if (!root.hotRunning) return root.isOff ? "已关闭" : "待命（未发信标）"
+                    if (!root.hotRunning) return root.isOff ? i18nc("The hotspot is switched off", "Off") : i18n("Standby (no beacon)")
                     return root.hotspotSsid + "　" + (root.hotBand || "") + (root.hotCh ? " ch" + root.hotCh : "")
-                        + (root.clients > 0 ? "　" + root.clients + " 台设备" : "")
+                        + (root.clients > 0 ? "　" + i18np("%1 device", "%1 devices", root.clients) : "")
                 }
             }
 
-            QQC2.Label { text: "开机自启"; opacity: 0.7 }
+            QQC2.Label { text: i18n("Autostart"); opacity: 0.7 }
             QQC2.Label {
                 Layout.fillWidth: true
-                text: root.autostartState === "on" ? "已启用" : "已禁用"
+                text: root.autostartState === "on" ? i18n("Enabled") : i18n("Disabled")
             }
         }
 
@@ -102,7 +104,7 @@ QQC2.ScrollView {
             Layout.rightMargin: Kirigami.Units.smallSpacing
             visible: root.mode === "normal" && root.isOff
             wrapMode: Text.WordWrap
-            text: "⚠ 普通模式：开启热点会断开当前 Wi-Fi 连接（此后设备上网依赖有线网络）"
+            text: i18n("⚠ Normal mode: turning on the hotspot disconnects the current Wi-Fi (uplink then relies on wired network)")
             font.pointSize: Kirigami.Theme.smallFont.pointSize
         }
 
@@ -111,7 +113,7 @@ QQC2.ScrollView {
             Layout.leftMargin: Kirigami.Units.smallSpacing
             Layout.rightMargin: Kirigami.Units.smallSpacing
             enabled: !root.busy && root.ready
-            text: root.busy ? "执行中…" : ((root.isOff || !root.hotRunning) ? "开启热点" : "关闭热点")
+            text: root.busy ? i18n("Running…") : ((root.isOff || !root.hotRunning) ? i18n("Turn on hotspot") : i18n("Turn off hotspot"))
             icon.name: (root.isOff || !root.hotRunning) ? "network-wireless-hotspot" : "dialog-cancel"
             onClicked: root.toggleHotspot()
         }
@@ -121,14 +123,14 @@ QQC2.ScrollView {
         // ---------- 模式 ----------
         QQC2.Label {
             Layout.leftMargin: Kirigami.Units.smallSpacing
-            text: "热点模式"
+            text: i18n("Hotspot mode")
             opacity: 0.7
             font.pointSize: Kirigami.Theme.smallFont.pointSize
         }
         QQC2.RadioButton {
             Layout.leftMargin: Kirigami.Units.smallSpacing
             Layout.fillWidth: true
-            text: "并发模式（Wi-Fi 不断，热点限 2.4GHz 同信道）"
+            text: i18n("Concurrent (Wi-Fi stays on, hotspot limited to 2.4GHz same channel)")
             checked: root.mode === "concurrent"
             enabled: !root.busy
             onClicked: root.setMode("concurrent")
@@ -136,7 +138,7 @@ QQC2.ScrollView {
         QQC2.RadioButton {
             Layout.leftMargin: Kirigami.Units.smallSpacing
             Layout.fillWidth: true
-            text: "普通模式（断开 Wi-Fi，网卡整体做热点）"
+            text: i18n("Normal (disconnect Wi-Fi, whole NIC as hotspot)")
             checked: root.mode === "normal"
             enabled: !root.busy
             onClicked: root.setMode("normal")
@@ -145,7 +147,7 @@ QQC2.ScrollView {
         QQC2.CheckBox {
             Layout.leftMargin: Kirigami.Units.smallSpacing
             Layout.fillWidth: true
-            text: "开机自动启用热点"
+            text: i18n("Autostart hotspot at boot")
             enabled: !root.busy
             checked: root.autostartState === "on"
             onClicked: root.setAutostart(checked)
@@ -156,7 +158,7 @@ QQC2.ScrollView {
         // ---------- 热点名称 / 密码 ----------
         QQC2.Label {
             Layout.leftMargin: Kirigami.Units.smallSpacing
-            text: "热点名称与密码"
+            text: i18n("Hotspot name & password")
             opacity: 0.7
             font.pointSize: Kirigami.Theme.smallFont.pointSize
         }
@@ -167,15 +169,15 @@ QQC2.ScrollView {
             Layout.rightMargin: Kirigami.Units.smallSpacing
             spacing: Kirigami.Units.smallSpacing
 
-            QQC2.Label { text: "当前密码"; opacity: 0.7 }
+            QQC2.Label { text: i18n("Current password"); opacity: 0.7 }
             QQC2.Label {
                 Layout.fillWidth: true
-                text: root.showPass ? (root.hotspotPass.length > 0 ? root.hotspotPass : "（未设置）")
+                text: root.showPass ? (root.hotspotPass.length > 0 ? root.hotspotPass : i18n("(not set)"))
                                     : "••••••••"
                 wrapMode: Text.WrapAnywhere
             }
             QQC2.ToolButton {
-                Accessible.name: root.showPass ? "隐藏密码" : "显示密码"
+                Accessible.name: root.showPass ? i18n("Hide password") : i18n("Show password")
                 icon.name: root.showPass ? "password-show-on" : "password-show-off"
                 onClicked: root.showPass = !root.showPass
             }
@@ -185,7 +187,7 @@ QQC2.ScrollView {
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.smallSpacing
             Layout.rightMargin: Kirigami.Units.smallSpacing
-            placeholderText: "热点名称（1-32 字符）"
+            placeholderText: i18n("Hotspot name (1-32 characters)")
             text: root.hotspotSsid
             enabled: !root.busy
         }
@@ -194,7 +196,7 @@ QQC2.ScrollView {
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.smallSpacing
             Layout.rightMargin: Kirigami.Units.smallSpacing
-            placeholderText: "新密码（8-63 字符，留空则只改名称）"
+            placeholderText: i18n("New password (8-63 characters, empty = keep password)")
             echoMode: TextInput.Password
             enabled: !root.busy
         }
@@ -203,7 +205,7 @@ QQC2.ScrollView {
             Layout.leftMargin: Kirigami.Units.smallSpacing
             Layout.rightMargin: Kirigami.Units.smallSpacing
             enabled: !root.busy
-            text: "应用名称/密码"
+            text: i18n("Apply name/password")
             icon.name: "dialog-ok-apply"
             onClicked: {
                 root.setCredentials(ssidField.text, passField.text)
@@ -217,7 +219,7 @@ QQC2.ScrollView {
             wrapMode: Text.WordWrap
             opacity: 0.6
             font.pointSize: Kirigami.Theme.smallFont.pointSize
-            text: "热点正在运行时，保存后会自动重启热点让新名称/密码生效（已连接的设备需要重连）。"
+            text: i18n("When the hotspot is running it restarts automatically to apply the change (connected devices must reconnect).")
         }
 
         Kirigami.Separator { Layout.fillWidth: true }
@@ -230,12 +232,12 @@ QQC2.ScrollView {
             QQC2.Label {
                 Layout.fillWidth: true
                 text: root.missingDeps.length === 0
-                    ? "依赖检查：全部就绪 ✓"
-                    : ("依赖检查：缺少 " + root.missingDeps.length + " 项 ⚠")
+                    ? i18n("Dependencies: all ready ✓")
+                    : i18n("Dependencies: %1 missing ⚠", root.missingDeps.length)
                 font.bold: root.missingDeps.length > 0
             }
             QQC2.Button {
-                text: "重新检查"
+                text: i18n("Recheck")
                 icon.name: "view-refresh"
                 onClicked: root.refreshDeps()
             }
@@ -263,7 +265,7 @@ QQC2.ScrollView {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 font.pointSize: Kirigami.Theme.smallFont.pointSize
-                text: "修复命令（会弹一次授权框；系统包安装刻意不纳入免密授权）"
+                text: i18n("Fix commands (one auth prompt; package installs are deliberately not password-free)")
             }
             QQC2.TextField {
                 Layout.fillWidth: true
@@ -282,12 +284,12 @@ QQC2.ScrollView {
             }
             QQC2.Button {
                 Layout.fillWidth: true
-                text: "复制上面的命令"
+                text: i18n("Copy commands")
                 icon.name: "edit-copy"
                 onClicked: {
                     fixField.selectAll()
                     fixField.copy()
-                    root.message = "命令已复制到剪贴板"
+                    root.message = i18n("Commands copied to clipboard")
                 }
             }
         }

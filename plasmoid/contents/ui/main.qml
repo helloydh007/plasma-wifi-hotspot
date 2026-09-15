@@ -31,11 +31,11 @@ PlasmoidItem {
     readonly property string hotspotPass: (st.hotspot && st.hotspot.pass) ? st.hotspot.pass : ""
     property bool showPass: false
 
-    readonly property string stateText: !ready ? "后端不可用" : (isOff ? "已关闭" : (hotRunning ? "运行中" : "待命"))
+    readonly property string stateText: !ready ? i18n("Backend unavailable") : (isOff ? i18nc("The hotspot is switched off", "Off") : (hotRunning ? i18n("Running") : i18nc("Wi-Fi not on 2.4GHz yet, hotspot not beaconing", "Standby")))
     readonly property string bandText: hotRunning
         ? ((hotBand || "2.4G") + (hotCh ? " ch" + hotCh : ""))
         : (wifiBand ? (wifiBand + (wifiCh ? " ch" + wifiCh : "")) : "")
-    readonly property string labelText: isOff ? "关" : ((mode === "normal" ? "AP " : "") + bandText)
+    readonly property string labelText: isOff ? i18nc("Short tray label", "Off") : ((mode === "normal" ? "AP " : "") + bandText)
 
     readonly property var missingDeps: deps.filter(function (d) { return !d.ok })
     readonly property var missingPkgs: {
@@ -62,16 +62,15 @@ PlasmoidItem {
     readonly property string baseIcon: "network-wireless-hotspot"
     readonly property bool offBadge: !ready || isOff
     Plasmoid.icon: root.baseIcon
-    Plasmoid.title: "Wi-Fi 热点控制"
     Plasmoid.status: PlasmaCore.Types.ActiveStatus
     // 托盘里只显示图标，所以把频段/信道放进悬浮提示
-    toolTipMainText: "Wi-Fi 热点：" + stateText
+    toolTipMainText: i18n("Wi-Fi hotspot: %1", stateText)
     toolTipSubText: hotRunning
-        ? ("热点 " + hotspotSsid + "　" + (hotBand || "") + (hotCh ? " ch" + hotCh : "")
-           + (clients > 0 ? "　" + clients + " 台设备" : ""))
+        ? (i18n("Hotspot %1 %2 ch%3", hotspotSsid, (hotBand || ""), (hotCh ? String(hotCh) : ""))
+           + (clients > 0 ? "　" + i18np("%1 device", "%1 devices", clients) : ""))
         : (mode === "normal"
-            ? "普通模式：开启会断开 Wi-Fi"
-            : (wifiSsid ? ("Wi-Fi " + wifiSsid + "　" + wifiBand + (wifiCh ? " ch" + wifiCh : "")) : "Wi-Fi 未连接"))
+            ? i18n("Normal mode: enabling will disconnect Wi-Fi")
+            : (wifiSsid ? i18n("Wi-Fi %1 %2 ch%3", wifiSsid, wifiBand, (wifiCh ? String(wifiCh) : "")) : i18n("Wi-Fi not connected")))
 
     // ---------- 命令 ----------
     readonly property string statusCmd: "pkexec " + ctl + " status"
@@ -145,9 +144,9 @@ PlasmoidItem {
             }
             if (!msg) {
                 msg = (data.stderr || "").trim().split("\n").pop()
-                    || (ok ? "已完成" : "见 journalctl -u kde-hotspot")
+                    || (ok ? i18n("Done") : i18n("see journalctl -u kde-hotspot"))
             }
-            root.message = (ok ? "" : "失败：") + msg
+            root.message = ok ? msg : i18n("Failed: %1", msg)
             Qt.callLater(() => { actionSource.disconnectSource(sourceName) })
             root.refreshStatus()
         }
@@ -183,7 +182,7 @@ PlasmoidItem {
     function runCtl(args) {
         if (root.busy) { return }
         root.busy = true
-        root.message = "执行中：" + args
+        root.message = i18n("Running: %1", args)
         actionSource.connectSource("pkexec " + root.ctl + " " + args)
     }
     function toggleHotspot() {
@@ -196,10 +195,10 @@ PlasmoidItem {
     // 安全地把值交给 shell（单引号包裹 + 内部单引号转义）
     function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'" }
     function setCredentials(ssid, pass) {
-        if (!ssid || ssid.length === 0) { root.message = "失败：热点名称不能为空"; return }
-        if (ssid.length > 32) { root.message = "失败：热点名称最长 32 个字符"; return }
+        if (!ssid || ssid.length === 0) { root.message = i18n("Failed: %1", i18n("Hotspot name cannot be empty")); return }
+        if (ssid.length > 32) { root.message = i18n("Failed: %1", i18n("Hotspot name must be at most 32 characters")); return }
         if (pass && pass.length > 0 && (pass.length < 8 || pass.length > 63)) {
-            root.message = "失败：密码长度需 8-63 位"
+            root.message = i18n("Failed: %1", i18n("Password must be 8-63 characters"))
             return
         }
         runCtl("set-credentials " + shq(ssid) + " " + shq(pass ? pass : ""))

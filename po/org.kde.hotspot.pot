@@ -1,0 +1,257 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-15 20:43+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+#: plasmoid/contents/ui/FullRepresentation.qml:46
+msgid "Hotspot: %1"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:50
+msgid "Normal mode (Wi-Fi disconnected, NIC as AP)"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:51
+msgid "Concurrent mode (Wi-Fi stays connected)"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:69
+msgctxt "@label wifi row"
+msgid "Wi-Fi"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:76
+msgid "Not connected (normal mode occupies the NIC)"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:77
+msgid "Not connected"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:83
+msgid "Hotspot"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:87
+#: plasmoid/contents/ui/main.qml:34
+msgctxt "The hotspot is switched off"
+msgid "Off"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:87
+msgid "Standby (no beacon)"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:89
+#: plasmoid/contents/ui/main.qml:70
+msgid "%1 device"
+msgid_plural "%1 devices"
+msgstr[0] ""
+msgstr[1] ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:93
+msgid "Autostart"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:96
+msgid "Disabled"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:96
+msgid "Enabled"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:107
+msgid ""
+"⚠ Normal mode: turning on the hotspot disconnects the current Wi-Fi (uplink "
+"then relies on wired network)"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:116
+msgid "Running…"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:116
+msgid "Turn off hotspot"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:116
+msgid "Turn on hotspot"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:126
+msgid "Hotspot mode"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:133
+msgid "Concurrent (Wi-Fi stays on, hotspot limited to 2.4GHz same channel)"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:141
+msgid "Normal (disconnect Wi-Fi, whole NIC as hotspot)"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:150
+msgid "Autostart hotspot at boot"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:161
+msgid "Hotspot name & password"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:172
+msgid "Current password"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:175
+msgid "(not set)"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:180
+msgid "Hide password"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:180
+msgid "Show password"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:190
+msgid "Hotspot name (1-32 characters)"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:199
+msgid "New password (8-63 characters, empty = keep password)"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:208
+msgid "Apply name/password"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:222
+msgid ""
+"When the hotspot is running it restarts automatically to apply the change "
+"(connected devices must reconnect)."
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:235
+msgid "Dependencies: all ready ✓"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:236
+msgid "Dependencies: %1 missing ⚠"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:240
+msgid "Recheck"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:268
+msgid ""
+"Fix commands (one auth prompt; package installs are deliberately not "
+"password-free)"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:287
+msgid "Copy commands"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:292
+msgid "Commands copied to clipboard"
+msgstr ""
+
+#: plasmoid/contents/ui/configGeneral.qml:11
+msgid "Show band/channel next to the tray icon"
+msgstr ""
+
+#: plasmoid/contents/ui/configGeneral.qml:18
+msgid "Status refresh interval (seconds)"
+msgstr ""
+
+#: plasmoid/contents/ui/configGeneral.qml:23
+msgid ""
+"Tip: concurrent mode keeps Wi-Fi connected (hotspot on the same 2.4GHz "
+"channel); normal mode disconnects Wi-Fi and uses the whole NIC as the "
+"hotspot."
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:34
+msgid "Backend unavailable"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:34
+msgid "Running"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:34
+msgctxt "Wi-Fi not on 2.4GHz yet, hotspot not beaconing"
+msgid "Standby"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:38
+msgctxt "Short tray label"
+msgid "Off"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:67
+msgid "Wi-Fi hotspot: %1"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:69
+msgid "Hotspot %1 %2 ch%3"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:72
+msgid "Normal mode: enabling will disconnect Wi-Fi"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:73
+msgid "Wi-Fi %1 %2 ch%3"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:73
+msgid "Wi-Fi not connected"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:147
+msgid "Done"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:147
+msgid "see journalctl -u kde-hotspot"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:149 plasmoid/contents/ui/main.qml:198
+#: plasmoid/contents/ui/main.qml:199 plasmoid/contents/ui/main.qml:201
+msgid "Failed: %1"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:185
+msgid "Running: %1"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:198
+msgid "Hotspot name cannot be empty"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:199
+msgid "Hotspot name must be at most 32 characters"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:201
+msgid "Password must be 8-63 characters"
+msgstr ""
