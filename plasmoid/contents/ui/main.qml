@@ -111,8 +111,22 @@ PlasmoidItem {
         connectedSources: []
         onNewData: (sourceName, data) => {
             root.busy = false
-            root.message = (data.exitCode === 0) ? "已完成"
-                : ("失败：" + ((data.stderr || "").trim() || "见 journalctl"))
+            // 优先解析控制脚本输出的一行 JSON（{ok,message}）。
+            // 不依赖 exitCode 的类型——executable 引擎里它可能是字符串 "0"
+            var ok = (data.exitCode === 0 || data.exitCode === "0")
+            var msg = ""
+            var out = (data.stdout || "").trim()
+            if (out.length > 0) {
+                try {
+                    var r = JSON.parse(out.split("\n").pop())
+                    if (typeof r.ok === "boolean") { ok = r.ok; msg = r.message || "" }
+                } catch (e) { }
+            }
+            if (!msg) {
+                msg = (data.stderr || "").trim().split("\n").pop()
+                    || (ok ? "已完成" : "见 journalctl -u zcode-hotspot")
+            }
+            root.message = (ok ? "" : "失败：") + msg
             Qt.callLater(() => { actionSource.disconnectSource(sourceName) })
             root.refreshStatus()
         }
@@ -161,6 +175,17 @@ PlasmoidItem {
         if (m !== root.mode) { runCtl("mode " + m) }
     }
     function setAutostart(v) { runCtl("autostart " + (v ? "on" : "off")) }
+    // 安全地把值交给 shell（单引号包裹 + 内部单引号转义）
+    function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'" }
+    function setCredentials(ssid, pass) {
+        if (!ssid || ssid.length === 0) { root.message = "失败：热点名称不能为空"; return }
+        if (ssid.length > 32) { root.message = "失败：热点名称最长 32 个字符"; return }
+        if (pass && pass.length > 0 && (pass.length < 8 || pass.length > 63)) {
+            root.message = "失败：密码长度需 8-63 位"
+            return
+        }
+        runCtl("set-credentials " + shq(ssid) + " " + shq(pass ? pass : ""))
+    }
 
     compactRepresentation: CompactRepresentation {}
     fullRepresentation: FullRepresentation {}

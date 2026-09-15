@@ -11,6 +11,7 @@ Plasma 6 系统托盘插件 + 后端服务，用来一键开关 Wi-Fi 热点，�
 - **两种模式**：并发模式（保持 Wi-Fi 连接）与普通模式（断开 Wi-Fi，网卡整体做 AP）
 - **托盘图标**反映状态；鼠标悬停显示热点状态、频段、信道、客户端数
 - 面板里可切换模式、开关热点、**开机自启**开关
+- **修改热点名称与密码**：面板里直接改（运行中的热点会自动重启使新值生效）
 - **依赖自检**：逐项检查 hostapd / dnsmasq / iw / iptables / 后端文件 / polkit 授权，缺失时给出可复制的修复命令
 - **免密码操作**：polkit 规则只授权执行一个控制脚本（见下"安全"）
 - 另有**桌面入口**：应用菜单/KRunner 搜"Wi-Fi 热点控制"可打开独立窗口
@@ -59,6 +60,16 @@ bash install.sh        # 部署后端(会弹一次授权框) + 安装插件(用�
 - **关**：并发模式下会停热点并把 Wi-Fi 的频段偏好恢复成关闭前的值（通常回 5GHz）
 - 右键托盘图标 → "配置 Wi-Fi 热点控制…"：设置显示标签、刷新间隔
 
+### 桌面入口怎么打开
+
+安装脚本会在 `~/.local/share/applications/` 放一个桌面入口，三种打开方式：
+
+1. **应用菜单**：打开开始菜单，在"网络"分类里找 **Wi-Fi 热点控制**（KRunner 里按 Alt+Space 搜"热点"也行）
+2. 命令行：`gtk-launch org.zcode.hotspot`
+3. 直接跑：`plasmawindowed org.zcode.hotspot`
+
+打开的就是插件面板的独立窗口（和托盘弹出的是同一套界面）。想放到桌面或面板上做快捷方式：把这个 `.desktop` 文件复制到 `~/Desktop/` 或拖到面板即可。
+
 命令行等价物（无需 sudo，polkit 已授权）：
 
 ```bash
@@ -66,7 +77,11 @@ pkexec /usr/local/sbin/zcode-hotspot-ctl status          # 状态 JSON
 pkexec /usr/local/sbin/zcode-hotspot-ctl on|off          # 按当前模式开关
 pkexec /usr/local/sbin/zcode-hotspot-ctl mode concurrent|normal
 pkexec /usr/local/sbin/zcode-hotspot-ctl autostart on|off
+pkexec /usr/local/sbin/zcode-hotspot-ctl set-credentials <SSID> [<新密码>]
 ```
+
+动作类命令会在 stdout 输出一行 JSON（`{"ok":true,"message":"…"}`），人类可读日志走 stderr——
+插件就是据此判断成败的（不依赖 exitCode 的类型）。
 
 ## 架构
 
@@ -81,7 +96,7 @@ pkexec /usr/local/sbin/zcode-hotspot-ctl autostart on|off
 | 文件 | 作用 |
 |---|---|
 | `plasmoid/` | Plasma 6 插件包（`kpackagetool6 -t Plasma/Applet -i plasmoid`） |
-| `backend/zcode-hotspot-ctl` | **唯一的特权入口**：on/off/mode/autostart/status |
+| `backend/zcode-hotspot-ctl` | **唯一的特权入口**：on/off/mode/autostart/set-credentials/status |
 | `backend/zcode-hotspot.sh` | 并发模式监督循环：跟随 Wi-Fi 信道起停 hostapd；遵守"保持关闭"标记 |
 | `backend/zcode-hotspot{,-dhcp,-normal}.service` | systemd 单元（后者是普通模式的开机自启） |
 | `backend/org.zcode.hotspotctl.policy` + `49-zcode-hotspot.rules` | polkit 动作与规则 |

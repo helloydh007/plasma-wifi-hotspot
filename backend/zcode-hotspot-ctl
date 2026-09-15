@@ -100,6 +100,7 @@ restore_band(){
 do_on(){
     if [ -z "${SSID:-}" ] || [ "${#PASS}" -lt 8 ]; then
         log "错误：请先在 /etc/zcode-hotspot/config 里设置 SSID 与 PASS（密码至少 8 位）"
+        result false "请先设置 SSID 与 PASS（密码至少 8 位）"
         return 1
     fi
     rm -f "$DISABLED"
@@ -120,17 +121,19 @@ do_on(){
                 802-11-wireless.ssid "$SSID" \
                 802-11-wireless-security.key-mgmt wpa-psk \
                 802-11-wireless-security.psk "$PASS" \
-                ipv4.method shared >/dev/null 2>&1 || { log "创建热点 profile 失败"; return 1; }
+                ipv4.method shared >/dev/null 2>&1 || { log "创建热点 profile 失败"; result false "创建热点 profile 失败"; return 1; }
             log "已创建普通模式热点 profile（ch6, shared）"
         fi
-        $NMCLI connection up "$NM_AP_CON" >/dev/null 2>&1 || { log "激活普通模式热点失败"; return 1; }
+        $NMCLI connection up "$NM_AP_CON" >/dev/null 2>&1 || { log "激活普通模式热点失败"; result false "激活普通模式热点失败"; return 1; }
         log "普通模式热点已开启（SSID=$SSID）"
+        result true "普通模式热点已开启（$SSID）"
         ;;
       *)
         stop_normal
         force_band_2g
         systemctl start "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
         log "并发模式已开启（热点将跟随 Wi-Fi 信道在 2.4GHz 起信标）"
+        result true "已开启：热点将以 2.4GHz 同信道发信标（SSID=$SSID）"
         ;;
     esac
     rm -f "$DISABLED"
@@ -147,12 +150,14 @@ do_off(){
             log "已恢复 Wi-Fi 连接 '$c'"
         fi
         log "普通模式热点已关闭"
+        result true "普通模式热点已关闭，Wi-Fi 已恢复"
         ;;
       *)
         touch "$DISABLED"
         stop_concurrent
         restore_band
         log "并发模式热点已关闭（保持关闭，直到重新开启）"
+        result true "热点已关闭，并保持关闭（Wi-Fi 频段偏好已恢复）"
         ;;
     esac
 }
@@ -174,6 +179,7 @@ do_mode(){
     rm -f "$STATE/autostart-normal"
     systemctl disable "$UNIT_NORMAL" >/dev/null 2>&1 || true
     log "已切换到 $m 模式；两套热点机制都已停止，需要时再手动开启；自启已关闭，需要的话请重新打开"
+    result true "已切换到${m}模式；热点已停止；自启已关闭（需重新打开）"
 }
 
 do_autostart(){
@@ -189,15 +195,65 @@ do_autostart(){
             systemctl enable "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
         fi
         log "已启用开机自启（$MODE 模式）"
+        result true "已启用开机自启（$MODE 模式）"
     else
         rm -f "$STATE/autostart-normal"
         systemctl disable "$UNIT_MAIN" "$UNIT_DHCP" "$UNIT_NORMAL" >/dev/null 2>&1 || true
         log "已关闭开机自启"
+        result true "已关闭开机自启"
+    fi
+}
+
+# ---------- 修改热点名称/密码 ----------
+set_credentials(){
+    local ssid="${1:-}" pass="${2:-}"
+    case "$ssid" in *$'\n'*) log "SSID 不能含换行"; result false "SSID 不能含换行"; return 1;; esac
+    case "$pass" in *$'\n'*) log "密码不能含换行"; result false "密码不能含换行"; return 1;; esac
+    [ -n "$ssid" ] || { log "SSID 不能为空"; result false "SSID 不能为空"; return 1; }
+    [ "${#ssid}" -le 32 ] || { log "SSID 最长 32 个字符"; result false "SSID 最长 32 个字符"; return 1; }
+    if [ -n "$pass" ]; then
+        if [ "${#pass}" -lt 8 ] || [ "${#pass}" -gt 63 ]; then
+            log "密码长度需 8-63 位"; result false "密码长度需 8-63 位"; return 1
+        fi
+    fi
+    local tmp; tmp=$(mktemp) || { result false "无法创建临时文件"; return 1; }
+    cp -a "$CONF" "$tmp" 2>/dev/null || true
+    # 用 awk 重写整行，任意字符（除换行）都安全
+    awk -v s="$ssid" -v p="$pass" '
+        /^SSID=/ { print "SSID=" s; done_ssid=1; next }
+        /^PASS=/ { if (p != "") print "PASS=" p; done_pass=1; next }
+        { print }
+        END {
+            if (!done_ssid) print "SSID=" s
+            if (p != "" && !done_pass) print "PASS=" p
+        }' "$CONF" > "$tmp" 2>/dev/null || { rm -f "$tmp"; result false "写入配置失败"; return 1; }
+    install -m 600 -o root -g root "$tmp" "$CONF"
+    rm -f "$tmp"
+    SSID="$ssid"; [ -n "$pass" ] && PASS="$pass"
+    log "已更新配置：SSID=$ssid$([ -n "$pass" ] && echo "，密码已更新")"
+
+    # 若某个机制正在运行，重启让新配置生效
+    if [ "$MODE" = normal ] && [ "$(normal_running)" = yes ]; then
+        stop_normal
+        do_on >/dev/null 2>&1 || true
+        log "已按新配置重启普通模式热点"
+        result true "已保存并重启热点：SSID=$ssid"
+    elif [ "$(concurrent_running)" = yes ] && [ -n "$(ap0_channel)" ]; then
+        systemctl restart "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
+        log "已按新配置重启并发模式热点（数秒后重新发信标）"
+        result true "已保存并重启热点：SSID=$ssid"
+    else
+        log "热点当前未运行；新配置将在下次开启时生效"
+        result true "已保存：SSID=$ssid（热点未运行，下次开启时生效）"
     fi
 }
 
 # ---------- JSON 状态 ----------
 jstr(){ printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# 动作类命令向 stdout 输出一行 JSON 结果（人类可读日志仍走 stderr），
+# 插件据此判断成败——不再依赖 exitCode 的类型（executable 引擎里可能是字符串）
+result(){ printf '{"ok":%s,"message":"%s"}\n' "$1" "$(jstr "$2")"; }
 
 do_status(){
     local it ch freq ssid band conn=no hot=no hch="" hband="" mech=none gw=""
@@ -253,6 +309,7 @@ case "${1:-}" in
   off)       do_off ;;
   mode)      do_mode "${2:-}" ;;
   autostart) do_autostart "${2:-}" ;;
+  set-credentials) set_credentials "${2:-}" "${3:-}" ;;
   status)    do_status ;;
   *) cat >&2 <<EOF
 用法: zcode-hotspot-ctl <命令>
@@ -260,6 +317,7 @@ case "${1:-}" in
   off                    关闭热点
   mode concurrent|normal 切换模式（会先停掉两套机制）
   autostart on|off       开机自启
+  set-credentials SSID [PASS]   修改热点名称/密码（PASS 省略则只改名称）
   status --json          状态 JSON
 EOF
      exit 2 ;;

@@ -55,9 +55,14 @@ QQC2.ScrollView {
             QQC2.Label { text: "Wi-Fi"; opacity: 0.7 }
             QQC2.Label {
                 Layout.fillWidth: true
-                text: root.mode === "normal"
-                    ? "已断开（普通模式占用网卡）"
-                    : (root.wifiSsid ? (root.wifiSsid + (root.wifiBand ? "　" + root.wifiBand + (root.wifiCh ? " ch" + root.wifiCh : "") : "")) : "未连接")
+                text: {
+                    // 按实际连接状态显示，而不是按模式（普通模式下 Wi-Fi 也可能已连接）
+                    var connected = (root.st.wifi && root.st.wifi.connected === "yes")
+                    if (!connected) {
+                        return root.mode === "normal" ? "未连接（普通模式占用网卡时需断开）" : "未连接"
+                    }
+                    return root.wifiSsid + (root.wifiBand ? "　" + root.wifiBand + (root.wifiCh ? " ch" + root.wifiCh : "") : "")
+                }
             }
 
             QQC2.Label { text: "热点"; opacity: 0.7 }
@@ -131,6 +136,55 @@ QQC2.ScrollView {
             enabled: !root.busy
             checked: root.autostartState === "on"
             onClicked: root.setAutostart(checked)
+        }
+
+        Kirigami.Separator { Layout.fillWidth: true }
+
+        // ---------- 热点名称 / 密码 ----------
+        QQC2.Label {
+            Layout.leftMargin: Kirigami.Units.smallSpacing
+            text: "热点名称与密码"
+            opacity: 0.7
+            font.pointSize: Kirigami.Theme.smallFont.pointSize
+        }
+        QQC2.TextField {
+            id: ssidField
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.smallSpacing
+            Layout.rightMargin: Kirigami.Units.smallSpacing
+            placeholderText: "热点名称（1-32 字符）"
+            text: root.hotspotSsid
+            enabled: !root.busy
+        }
+        QQC2.TextField {
+            id: passField
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.smallSpacing
+            Layout.rightMargin: Kirigami.Units.smallSpacing
+            placeholderText: "新密码（8-63 字符，留空则只改名称）"
+            echoMode: TextInput.Password
+            enabled: !root.busy
+        }
+        QQC2.Button {
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.smallSpacing
+            Layout.rightMargin: Kirigami.Units.smallSpacing
+            enabled: !root.busy
+            text: "应用名称/密码"
+            icon.name: "dialog-ok-apply"
+            onClicked: {
+                root.setCredentials(ssidField.text, passField.text)
+                passField.text = ""
+            }
+        }
+        QQC2.Label {
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.smallSpacing
+            Layout.rightMargin: Kirigami.Units.smallSpacing
+            wrapMode: Text.WordWrap
+            opacity: 0.6
+            font.pointSize: Kirigami.Theme.smallFont.pointSize
+            text: "热点正在运行时，保存后会自动重启热点让新名称/密码生效（已连接的设备需要重连）。"
         }
 
         Kirigami.Separator { Layout.fillWidth: true }
