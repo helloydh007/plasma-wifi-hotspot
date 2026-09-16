@@ -83,6 +83,11 @@ Plasma's built-in "block sleep/screen locking" (caffeine) lives in plasmashell's
 That's why `install.sh` fingerpints the QML/metadata/config/translations and only restarts when they actually changed —
 backend-only updates (scripts, systemd units, polkit) never restart the shell.
 
+**Upgrading from the old namespace**: earlier versions used `org.kde.hotspot` (squatting KDE's namespace).
+`install.sh` migrates automatically: it uninstalls the old applet id, rewrites the tray wiring in `appletsrc`
+(backed up as `.bak-namespace-migration`), and cleans the old desktop entry and translation; `deploy.sh`
+removes the old polkit action file. No manual steps needed.
+
 ## Usage / CLI
 
 ```bash

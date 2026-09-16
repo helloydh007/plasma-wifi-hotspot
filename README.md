@@ -116,6 +116,11 @@ bash install.sh --no-restart  # 从不重启（新界面在注销重登后生效
 因此 `install.sh` 只会在**插件内容确实变化时**才重启：它对 QML/元数据/配置/翻译取指纹并与上次安装比较，
 仅后端改动（脚本、systemd 单元、polkit 规则）不会触发重启。需要绝对不重启时用 `--no-restart`。
 
+**从旧命名空间升级**：早期版本用的是 `org.kde.hotspot`（占用 KDE 命名空间，不符合上游惯例）。
+`install.sh` 会自动迁移：卸载旧 ID 的插件、把托盘接线（`appletsrc`，改前备份为 `.bak-namespace-migration`）
+里的插件 ID 改为 `io.github.helloydh007.hotspot`、清理旧桌面入口与旧翻译；`deploy.sh` 会删除旧 ID 的
+polkit 动作文件。升级后无需手工操作。
+
 > 想要一个不受 plasmashell 重启影响的"保持唤醒"：`systemd-inhibit --what=idle:sleep --why="手动保持唤醒" sleep infinity &`
 > （结束时 kill 该进程），它由独立进程持有抑制锁。
 
