@@ -59,6 +59,7 @@ PlasmoidItem {
     }
     readonly property bool backendMissing: {
         var f = ["/usr/local/sbin/kde-hotspot-ctl", "/usr/local/sbin/kde-hotspot.sh",
+                 "/usr/local/lib/kde-hotspot/config.sh",
                  "/etc/systemd/system/kde-hotspot.service"]
         for (var i = 0; i < f.length; i++) {
             for (var j = 0; j < missingDeps.length; j++) if (missingDeps[j].path === f[i]) return true
@@ -69,6 +70,10 @@ PlasmoidItem {
     // 默认值或空值，面板必须据此提示，而不是把默认值当成真实状态
     readonly property bool configReadable: st.config_readable !== false
     readonly property bool ifacePresent: !(st.wifi && st.wifi.present === "no")
+    // 并发模式热点在发信标、但 DHCP(dnsmasq) 没在跑：客户端连得上却拿不到 IP。
+    // 这是典型的静默故障（面板只显示“运行中”），所以显式提示（评审 §3.6-7）。
+    readonly property bool dhcpMissing: hotRunning && !!st.hotspot
+        && st.hotspot.mechanism === "hostapd" && st.hotspot.dhcp_active === "no"
     // 修复用的后端脚本：优先用 root 拥有的副本（deploy.sh 会安装到该位置），
     // 插件包内那份在用户可写目录，只作后备——避免"授权后以 root 执行家目录脚本"
     readonly property string pkgBackendDir: Qt.resolvedUrl("../backend/deploy.sh").toString().replace("file://", "")
@@ -91,7 +96,8 @@ PlasmoidItem {
     toolTipSubText: hotRunning
         ? (i18n("Hotspot %1 %2 ch%3", hotspotSsid, (hotBand || ""), (hotCh ? String(hotCh) : ""))
            + (clients > 0 ? "　" + i18np("%1 device", "%1 devices", clients) : "")
-           + (fallback ? "　" + i18n("(2.4GHz fallback)") : ""))
+           + (fallback ? "　" + i18n("(2.4GHz fallback)") : "")
+           + (dhcpMissing ? "　" + i18n("(DHCP unavailable)") : ""))
         : (mode === "normal"
             ? i18n("Normal mode: enabling will disconnect Wi-Fi")
             : (wifiSsid ? i18n("Wi-Fi %1 %2 ch%3", wifiSsid, wifiBand, (wifiCh ? String(wifiCh) : "")) : i18n("Wi-Fi not connected")))
@@ -109,6 +115,7 @@ PlasmoidItem {
         "/usr/sbin/iptables",
         "/usr/local/sbin/kde-hotspot.sh",
         "/usr/local/sbin/kde-hotspot-ctl",
+        "/usr/local/lib/kde-hotspot/config.sh",
         "/etc/kde-hotspot/config",
         "/etc/kde-hotspot/dnsmasq.conf",
         "/etc/systemd/system/kde-hotspot.service",
@@ -201,7 +208,11 @@ PlasmoidItem {
             root.message = ok ? msg : i18n("Failed: %1", msg)
             // 失败时兜底删除临时密码文件（成功时 ctl 已经删掉了）
             if (!ok && root.lastAction.indexOf("set-credentials") === 0 && root.pendingPassFile.length > 0) {
-                cleanupSource.connectSource("rm -f " + root.pendingPassFile)
+                var pf = root.pendingPassFile
+                // 用 lastIndexOf 取父目录：xgettext 解析不了正则字面量，会误报未结束字符串
+                var pdir = pf.substring(0, pf.lastIndexOf("/"))
+                cleanupSource.connectSource("sh -c 'rm -f -- " + root.shq(pf)
+                    + "; rmdir -- " + root.shq(pdir) + " 2>/dev/null'")
                 root.pendingPassFile = ""
             }
             // 后端已受理"开启"：热点真正发信标前一直保持"开启中"
@@ -248,8 +259,16 @@ PlasmoidItem {
                 root.message = i18n("Failed: %1", i18n("could not stage the password file"))
                 return
             }
+            // 路径由 mktemp 生成，从 stdout 读回（不再自己拼一个可预测的名字）
+            var staged = (data.stdout || "").trim().split("\n").pop()
+            if (staged.length === 0) {
+                root.busy = false
+                root.message = i18n("Failed: %1", i18n("could not stage the password file"))
+                return
+            }
             root.busy = false
-            root.runCtl("set-credentials " + root.shq(root.pendingSsid) + " --pass-file " + root.pendingPassFile)
+            root.pendingPassFile = staged
+            root.runCtl("set-credentials " + root.shq(root.pendingSsid) + " --pass-file " + root.shq(staged))
         }
     }
 
@@ -284,6 +303,11 @@ PlasmoidItem {
         actionSource.connectSource("pkexec " + root.ctl + " " + args)
     }
     function toggleHotspot() {
+        // “开启中”期间按钮的语义是取消：必须显式发 off。
+        // 不能沿用 !hotRunning → "on" 的推断：此时热点确实还没发信标，
+        // 于是这里会发出 "on"，而 runCtl 又以“开启中只放行 off”为由丢弃它，
+        // 结果按钮点了完全没反应、只能等满 90 秒超时（评审 P0）。
+        if (root.awaitingHotspot) { runCtl("off"); return }
         runCtl((root.isOff || !root.hotRunning) ? "on" : "off")
     }
     function setMode(m) {
@@ -302,13 +326,18 @@ PlasmoidItem {
         if (pass && pass.length > 0) {
             // 新密码先落到 0600 临时文件（base64 传输，避免引号/转义问题），
             // 再让 ctl 用 --pass-file 读取并立即删除——这样密码不会出现在
-            // pkexec 的 argv 里（同机其他用户 ps 看不到）
+            // pkexec 的 argv 里。
+            // 目录名/文件名由 mktemp 随机生成：旧版自己拼 /tmp/kde-hotspot-pass-<时间戳>.tmp，
+            // 名字可预测，同机其他用户可以先占位（建同名文件或符号链接）把 root 的读写
+            // 引到别处（GPT P0-3）。ctl 侧还会再校验“文件属主=调用者、所在目录不可被
+            // 他人写”，两边都不放行才拒绝。
+            // 目录优先放 $XDG_RUNTIME_DIR（/run/user/<uid>，0700 且属于本人）。
             root.busy = true
             root.pendingSsid = ssid
-            root.pendingPassFile = "/tmp/kde-hotspot-pass-" + Date.now() + ".tmp"
+            root.pendingPassFile = ""
             root.message = i18n("Running: %1", "set-credentials")
-            prepSource.connectSource("sh -c 'umask 077; printf %s " + b64utf8(pass)
-                + " | base64 -d > " + root.pendingPassFile + "'")
+            prepSource.connectSource("sh -c 'umask 077; d=$(mktemp -d \"${XDG_RUNTIME_DIR:-/tmp}/kde-hotspot-pass.XXXXXX\") || exit 1; "
+                + "f=$d/pass; printf %s " + b64utf8(pass) + " | base64 -d > $f || exit 1; printf %s \"$f\"'")
         } else {
             runCtl("set-credentials " + shq(ssid) + " " + shq(""))
         }

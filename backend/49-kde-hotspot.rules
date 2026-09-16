@@ -1,12 +1,17 @@
-// 允许本机活动会话中 sudo/netdev 组的成员免密码执行热点控制脚本。
+// 允许本机活动会话中 netdev/sudo/wheel 组的成员免密码执行热点控制脚本。
 // 授权范围由动作注解 org.freedesktop.policykit.exec.path 限定为
 // /usr/local/sbin/kde-hotspot-ctl 这一个脚本，不能用于任意命令。
+//
+// 这三个组必须与 deploy.sh 里挑选"配置文件可读组"（/etc/kde-hotspot/config 的
+// root:<组> 640）的候选列表一致：否则会出现"能免密执行 ctl、却读不到配置"或
+// 相反的授权集合与可读集合不一致（评审 §3.5）。改这里时记得同步 deploy.sh。
 //
 // 撤销：删除本文件（或改成 polkit.Result.AUTH_ADMIN_KEEP）即可恢复"每次弹密码"。
 polkit.addRule(function(action, subject) {
     if (action.id == "io.github.helloydh007.hotspotctl.run" &&
         subject.local && subject.active &&
-        (subject.isInGroup("sudo") || subject.isInGroup("netdev"))) {
+        (subject.isInGroup("netdev") || subject.isInGroup("sudo") ||
+         subject.isInGroup("wheel"))) {
         return polkit.Result.YES;
     }
 });

@@ -4,13 +4,29 @@
 # /etc/kde-hotspot/config 并**自动生成一套随机 SSID/密码**（安装时打印一次）。
 # 手工复制本文件的话请自行填写 SSID/PASS —— 留空或仍为示例占位值时，
 # 后端会拒绝启动热点（不会用公开已知的密码起热点）。
+#
+# ---- 文件格式 ----
+#   * 每行 KEY=value，值为空就写 KEY=
+#   * 本文件是**纯数据**：后端只做解析，绝不 source 执行。
+#     写 $(...)、反引号、$$ 都只是普通字符，不会被求值，也不会被改写
+#   * '#' 或 ';' 开头的行是注释；行尾的 " # 说明" 也算注释
+#   * 值里需要空格或 # 时，用单/双引号把整个值包起来，例如 SSID="My Net #1"
+#   * 键只能由字母/数字/下划线组成，不认识的键会被忽略
+#   * 改完执行：sudo systemctl restart kde-hotspot kde-hotspot-dhcp
+#     （配置只在服务启动时读一次；在面板里改名称/密码不用手动重启，ctl 会自己重启服务）
+#
+# ---- 键 ----
+# STA_IF / AP_IF / AP_IP / AP_NET / SSID / PASS / MODE 为常用项，其余可选项默认值即可用。
+# AP_NET 缺省时按 AP_IP 推导成 x.y.z.0/24；写了但与 AP_IP 不一致时 ctl 会告警。
+# 同一键写了多次时以**最后一次**为准（与旧版直接 source 配置的行为一致，方便在文件末尾覆盖）；
+# 不过面板/ctl 改动某个键时会把它的重复行合并成一行，所以正常用不会出现重复键。
 
 STA_IF=wlp0s20f3     # 上行 Wi-Fi 接口；留空或接口不存在时后端会尝试自动探测
 AP_IF=ap0            # 虚拟热点接口名
 AP_IP=10.233.33.1    # 热点网关（/etc/kde-hotspot/dnsmasq.conf 会按此生成）
 AP_NET=10.233.33.0/24
-SSID=                # 热点名称（1-32 字符，必填）
-PASS=                # 热点密码（8-63 字符，必填）
+SSID=                # 热点名称（1-32 字符，必填；不能是 my-hotspot 这类示例占位值）
+PASS=                # 热点密码（8-63 字符，必填；不能是 change-me-* 这类示例占位值）
 MODE=concurrent      # concurrent=并发模式(保持 Wi-Fi) / normal=普通模式(断开 Wi-Fi)
 
 # ---- 以下为可选项（默认值即可用，取消注释后生效）----
@@ -19,7 +35,7 @@ MODE=concurrent      # concurrent=并发模式(保持 Wi-Fi) / normal=普通模�
 # RULE_PRIO=8990     # 热点网段策略路由优先级（需高于代理软件 TUN 的 9000 段，
                      # 让客户端流量绕过代理直连上行；一般不用改）
 # COUNTRY=CN         # 监管域：hostapd country_code 与 iw reg set 都用它；
-                     # 留空则沿用当前 STA 的监管域
+                     # 留空则沿用当前 STA 的监管域（默认留空，不硬编任何国家）
 # NORMAL_CHANNEL=6   # 普通模式热点的 2.4GHz 信道
 # DHCP_START=50      # dnsmasq 地址池起（网段最后一段）
 # DHCP_END=150       # dnsmasq 地址池止

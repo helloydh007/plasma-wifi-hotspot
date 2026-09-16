@@ -36,7 +36,7 @@ echo "== 1) 部署后端（会弹一次授权框）=="
 pkexec bash "$SRC/backend/deploy.sh"
 
 echo
-echo "== 2) 同步后端副本进插件包（供插件内“一键修复”）=="
+echo "== 2) 同步后端副本进插件包（供插件内的【一键修复】）=="
 bash "$SRC/sync-backend.sh"
 
 echo
@@ -49,7 +49,7 @@ if kpackagetool6 -t Plasma/Applet -l 2>/dev/null | grep -qx "$LEGACY_ID"; then
         cp -a "$APPSRC" "$APPSRC.bak-namespace-migration"
         # 托盘接线（extraItems/knownItems 等）里存的是插件 ID，必须一起改，
         # 否则更新后托盘里的小组件会变成失效条目
-        sed -i "s/org\.kde\.hotspot/io.github.helloydh007.hotspot/g" "$APPSRC"
+        sed -i "s/org\.kde\.hotspot/$NEW_ID/g" "$APPSRC"
         echo "   已更新托盘接线（原文件备份为 $(basename "$APPSRC").bak-namespace-migration）"
     fi
     kpackagetool6 -t Plasma/Applet -r "$LEGACY_ID" >/dev/null 2>&1 || true
@@ -112,8 +112,9 @@ fi
 echo
 cat <<'TXT'
 完成。接下来：
-  1) 编辑 /etc/kde-hotspot/config，把 SSID/PASS 改成你自己的
-     （未设置时后端会拒绝启动热点，不会用默认密码）
+  1) 热点名称/密码：打开面板直接改（首次部署已自动生成随机密码，
+     不会有“示例默认密码”这种问题；也可以编辑 /etc/kde-hotspot/config
+     里的 SSID/PASS，然后 systemctl restart kde-hotspot 让它生效）
   2) 把插件放进托盘：右键面板 → 系统托盘设置 → 条目 → 勾选“Wi-Fi 热点控制”
      或者直接把它拖到面板上（面板上会显示频段/信道文字）
   3) 也可以从应用菜单/KRunner 搜“Wi-Fi 热点控制”打开独立窗口

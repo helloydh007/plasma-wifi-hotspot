@@ -1,3 +1,6 @@
 *.deb
 *.log
 /tmp/
+# 本地静态检查工具（shellcheck / qmllint 以二进制形式下载，不入库）
+.tools/
+*~

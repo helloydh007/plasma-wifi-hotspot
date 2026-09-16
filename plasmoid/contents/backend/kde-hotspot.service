@@ -11,20 +11,39 @@ Type=simple
 ExecStart=/usr/local/sbin/kde-hotspot.sh
 # 停止/失败后清理：恢复 Wi-Fi 频段偏好、拆掉 NAT/转发/策略路由、清回退标记
 #（否则异常退出会把 Wi-Fi 永久钉在 2.4GHz，规则也会残留）
+# 注意：ExecStopPost 同样受本单元的能力集合约束，改 CapabilityBoundingSet 时一并考虑。
 ExecStopPost=/usr/local/sbin/kde-hotspot-ctl cleanup
 Restart=on-failure
 RestartSec=8
 
-# 加固：服务只需要网络管理能力，不碰家目录与 /usr
+# ---------- 加固 ----------
+# 服务只需要网络管理能力，不碰家目录、内核可调参数与模块
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
 ProtectHome=yes
 ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
+RestrictNamespaces=yes
 LockPersonality=yes
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BROADCAST CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_SETUID CAP_SETGID CAP_KILL
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+UMask=0077
+# 只保留真正需要的能力（评审 P0-4）：
+#   CAP_NET_ADMIN  ip link/addr、iptables、iw、sysctl net.ipv4.ip_forward
+#   CAP_NET_RAW    hostapd 的 AF_PACKET 套接字（EAPOL/四次握手）
+# 去掉的理由：
+#   CAP_NET_BROADCAST  capabilities(7)：没有任何已知实现使用它
+#   CAP_CHOWN/FOWNER   本脚本不改别人文件的属主，也不 chmod 非自己拥有的文件
+#   CAP_SETUID/SETGID  hostapd 2.10 二进制里没有 setuid/降权代码路径（本脚本也不降权）
+#   CAP_KILL           kill 自己的子进程不需要能力
+#   CAP_DAC_OVERRIDE   读写的都是 root 自己的文件（配置 640 root 属主、/run 下自建文件）
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 
 [Install]
 WantedBy=multi-user.target

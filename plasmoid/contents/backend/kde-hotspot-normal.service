@@ -2,12 +2,31 @@
 Description=开机开启普通模式热点（仅当 MODE=normal 且已启用自启时生效）
 After=NetworkManager.service
 Wants=NetworkManager.service
+# 自启开关的状态文件：由 `kde-hotspot-ctl autostart on`（MODE=normal 时）创建，
+# autostart off / off / mode 都会删掉它。条件不满足时 systemd 直接跳过本单元。
 ConditionPathExists=/var/lib/kde-hotspot/autostart-normal
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/kde-hotspot-ctl on
 TimeoutStartSec=60
+
+# ---------- 加固 ----------
+# 这里不加 CapabilityBoundingSet：`ctl on` 在普通模式下仍会先停掉并发模式的
+# 残留（ip link / iptables 需要 CAP_NET_ADMIN），保留 root 默认能力集合更稳妥。
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

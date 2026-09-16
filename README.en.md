@@ -90,12 +90,27 @@ removes the old polkit action file. No manual steps needed.
 
 ## Usage / CLI
 
+Semantics worth knowing (they are symmetric on purpose):
+
+- **Turning it off keeps it off**: `off` stops both mechanisms, disables all three systemd units, restores the
+  Wi-Fi band preference, and writes a "stay off" marker — so a reboot, a NIC replug or an NM reconnect will not
+  silently bring the hotspot back. Turn the **Autostart** switch on again to undo that.
+- **Switching mode** also turns autostart off, so you always choose explicitly what starts at boot.
+- **Credentials are applied immediately**: if the hotspot is running (or the concurrent service is idle but loaded),
+  `set-credentials` restarts it so the new name/password take effect right away.
+- **DHCP failures are reported, not hidden**: if the main unit is up but dnsmasq is not, the panel says so
+  (previously it showed "running" while clients could associate but never get an IP).
+- **The config file is read once at service start** — restart `kde-hotspot`/`kde-hotspot-dhcp` after editing it by hand.
+
 ```bash
 pkexec /usr/local/sbin/kde-hotspot-ctl status          # status JSON (includes current SSID/password)
 pkexec /usr/local/sbin/kde-hotspot-ctl on|off          # toggle in the current mode
 pkexec /usr/local/sbin/kde-hotspot-ctl mode concurrent|normal
 pkexec /usr/local/sbin/kde-hotspot-ctl autostart on|off
 pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> [<new password>]
+pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> -              # password from stdin
+pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> --pass-file F  # only a 0600 regular file in the caller's own private dir
+pkexec /usr/local/sbin/kde-hotspot-ctl cleanup        # drop leftover NAT/FORWARD/policy-routing rules and band backups
 ```
 
 Action commands print one JSON line (`{"ok":true,"message":"…"}`) on stdout — that's what the applet parses.
@@ -108,12 +123,49 @@ Action commands print one JSON line (`{"ok":true,"message":"…"}`) on stdout �
 - The hotspot password lives in `/etc/kde-hotspot/config` (`root:netdev 640` — readable only by root and the network-admin group). That user set matches the one authorized by the polkit rule (sudo/netdev groups run ctl without a password), so the security level is unchanged; it lets the applet read SSID/password/mode without privileges. No default passwords are built in, and the backend refuses to start without a config.
   `status`'s JSON includes the current SSID and password (masked by default in the panel; the eye button reveals it) — if that is unacceptable on a shared machine, drop the `pass` field from `do_status`.
 - Non-sensitive state flags (`disabled`, `fallback`) are 644 for the unprivileged status query; `/run/kde-hotspot/hostapd.conf` (contains the password) stays 600.
+- **The config file is pure data, never executed**: `backend/kde-hotspot-config.sh` parses `KEY=value` lines itself and
+  never `source`s the file, so `$(...)`, backticks or `$$` inside an SSID/password are literal characters. (The old
+  implementation sourced it as root, which was both a local root-RCE and a silent way to corrupt a password that
+  contained `$`.) Writing back rewrites only the affected line, keeps its inline comment, and single-quotes values
+  containing characters outside `A-Za-z0-9._:/@%+,-`.
+- `--pass-file` accepts **only a regular 0600 file owned by the caller, inside a directory owned by the caller and not
+  group/other-writable**, at most 4 KiB, never a symlink; it is deleted right after reading, and the temporary directory
+  is removed when it looks like ours (`mktemp -d` under `$XDG_RUNTIME_DIR`, random name — no predictable `/tmp` path).
+  Anything else is refused, so the helper cannot be tricked into reading `/etc/shadow`.
+- **The group is decided in exactly one place**: the groups authorized by the polkit rule, the readable group of
+  `/etc/kde-hotspot/config` and the candidate list in `deploy.sh` (first of `netdev`/`sudo`/`wheel` that the deployer
+  belongs to) agree with each other; the chosen group is recorded in `/var/lib/kde-hotspot/conf.group` and reused by the
+  ctl when rewriting the config. No more "polkit authorizes group A while the file is only readable by group B".
+- **The systemd units are sandboxed**: `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=full`, `ProtectHome`,
+  `ProtectKernel*`, `ProtectClock/Hostname`, `RestrictNamespaces`, `RestrictAddressFamilies`
+  (unix/inet/inet6/netlink/packet only), `SystemCallArchitectures=native`; the main and normal units keep only
+  `CAP_NET_ADMIN`/`CAP_NET_RAW`, while the dnsmasq unit additionally keeps the capabilities it declares
+  (`CAP_CHOWN`/`CAP_SETUID`/`CAP_SETGID`/`CAP_NET_BIND_SERVICE`/`CAP_NET_RAW`). `systemd-analyze security` score:
+  main **6.8 → 4.4 (OK)**, dnsmasq **6.7 → 5.0**. Cleanup on stop removes the band preference, NAT/FORWARD rules and the
+  policy route using the interface/subnet **recorded** in `/run/kde-hotspot/rules.state`, so leftovers are cleaned even
+  after `STA_IF`/`AP_IP` changed.
 
 ## Uninstall
 
 See the Chinese README (卸载) for the full script; in short: remove the widget from the tray first (right-click → Remove), then stop/disable the three `kde-hotspot*` systemd units, remove the backend files (`/usr/local/sbin/kde-hotspot-ctl`, `/usr/local/sbin/kde-hotspot.sh`, the units, the polkit policy + rule, the NetworkManager `conf.d` file, `/etc/kde-hotspot`, `/var/lib/kde-hotspot`), clean up the `ap0` interface and the `kde-hotspot-normal` NM profile if present, then `kpackagetool6 -t Plasma/Applet -r io.github.helloydh007.hotspot` and remove `~/.local/share/applications/io.github.helloydh007.hotspot.desktop`. Removing the tray widget first means no plasmashell restart is needed (a restart would reset in-memory applet states such as the battery applet's caffeine toggle).
 
 ## Troubleshooting
+
+### I edited `/etc/kde-hotspot/config` by hand and nothing changed
+
+The config is read once when the service starts (so that per-second status polling does not re-parse the file):
+
+```bash
+sudo systemctl restart kde-hotspot kde-hotspot-dhcp
+```
+
+Changing the name/password from the panel needs no manual restart — the ctl restarts the services itself.
+
+### The panel says the hotspot is running, but clients never get an IP
+
+Look for the "DHCP unavailable" warning in the panel: it means the main unit is up but dnsmasq is not
+(`journalctl -u kde-hotspot-dhcp`). dnsmasq binds only the hotspot interface via `bind-dynamic`, so it does not
+conflict with systemd-resolved on `127.0.0.53` and resolved does not need to be stopped.
 
 ### Clients connect to the hotspot but report "no internet"
 
@@ -134,6 +186,30 @@ tcpdump -ni ap0 host 10.233.33.50                   # what the client actually s
 ```
 
 If client packets do leave but no replies come back, the problem is upstream (router/ISP), not the hotspot.
+
+## Development / tests
+
+```bash
+bash tests/run-all.sh     # syntax + shellcheck + unit tests + QML syntax; same script CI runs
+```
+
+- `tests/test-config.sh` — config-library unit tests (parsing, quoting/comments, injection, validation, atomic writes; 58 assertions)
+- `tests/test-ctl.sh` — **end-to-end** tests of the control script (108+ assertions): it `sed`s the absolute-path
+  declarations of the ctl into a temp dir and puts mock `iw`/`nmcli`/`systemctl`/`ip`/`iptables` on `PATH`, so real command
+  sequences run and the assertions cover the emitted JSON, the resulting state/config files and the syscalls the script made.
+  No root, no NIC, no real network — which is why it runs in CI.
+- `.github/workflows/ci.yml` — runs all of the above on push/PR; the QML part is a `qmllint` syntax check
+  (Plasma QML modules are unavailable in CI, so import-related warnings are ignored and only syntax errors fail).
+
+Red/green self-check (proves the assertions are not vacuous) — the same suite against the pre-fix implementation:
+
+```bash
+git show HEAD:backend/kde-hotspot-ctl > /tmp/old-ctl
+CTL_SRC=/tmp/old-ctl bash tests/test-ctl.sh   # 63 passed / 45 failed before the fix
+```
+
+On the old code the config's `$(command)` **was executed** (the test watches a marker file appear), `SSID=My$$Net`
+became `My41Net`, and `status` output containing a control character was not valid JSON at all; all of that is green now.
 
 ## Acknowledgments
 

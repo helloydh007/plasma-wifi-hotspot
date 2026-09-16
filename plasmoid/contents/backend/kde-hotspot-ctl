@@ -4,24 +4,41 @@
 #
 # 用法:
 #   kde-hotspot-ctl on            按当前模式开启热点
-#   kde-hotspot-ctl off           关闭热点
+#   kde-hotspot-ctl off           关闭热点（保持关闭，并关闭开机自启）
 #   kde-hotspot-ctl mode M        切换模式: concurrent | normal
 #   kde-hotspot-ctl autostart on|off
-#   kde-hotspot-ctl status --json 输出状态 JSON（只读）
+#   kde-hotspot-ctl set-credentials SSID [PASS|-] [--pass-file FILE]
+#   kde-hotspot-ctl status        状态 JSON（只读，可免特权运行）
+#   kde-hotspot-ctl cleanup       清理残留（由 systemd ExecStopPost 调用）
+#   kde-hotspot-ctl sync-helpers  按 config 重新生成 dnsmasq.conf
 #
 # 两种模式:
 #   concurrent  并发模式: hostapd + 虚拟 ap0，Wi-Fi 客户端保持连接（受限于同信道）
 #   normal      普通模式: NetworkManager 原生热点，同一网卡切 AP，Wi-Fi 客户端必须断开
+#
+# 配置一律通过 kde-hotspot-config.sh 以纯数据方式读取，绝不 source
+# （用户可控内容进 shell 解析器 = 正常名字损坏 + root 任意命令执行）。
 set -u
-# 状态/备份文件一律收紧（band.backup 等虽无密码，保持一致的最小权限）
+# 状态/备份/临时文件一律收紧
 umask 077
 
-CONF=/etc/kde-hotspot/config
+CONF_LIB=/usr/local/lib/kde-hotspot/config.sh
+if [ ! -r "$CONF_LIB" ]; then
+    echo "[ctl] 缺少配置库 $CONF_LIB（请重跑 install.sh 或 deploy.sh）" >&2
+    exit 1
+fi
+# shellcheck source=/dev/null
+. "$CONF_LIB"
+
+CONF=$(hs_conf_path)
 STATE=/var/lib/kde-hotspot
+RUN=/run/kde-hotspot
 DISABLED="$STATE/disabled"
 BANDBACKUP="$STATE/band.backup"
 CONNBACKUP="$STATE/band.conn"
 STABACKUP="$STATE/sta-conn.backup"
+CLIENTS="$STATE/clients"
+RULESTATE="$RUN/rules.state"
 NM_AP_CON=kde-hotspot-normal
 UNIT_MAIN=kde-hotspot.service
 UNIT_DHCP=kde-hotspot-dhcp.service
@@ -30,13 +47,29 @@ UNIT_NORMAL=kde-hotspot-normal.service
 IW=/usr/sbin/iw
 NMCLI=/usr/bin/nmcli
 IPT=/usr/sbin/iptables
+ARP=/proc/net/arp
+# --pass-file 的上限（密码最多 63 字节，留足余量）
+PASS_FILE_MAX=4096
 
-# ---------- 读配置 ----------
-CONF_READABLE=no
-if [ -r "$CONF" ]; then CONF_READABLE=yes; . "$CONF"; fi
+log(){ echo "[ctl] $*" >&2; }
+mkdir -p "$STATE" 2>/dev/null || true   # 免特权调用 status 时可能无权创建，忽略
+
+# ---------- 读配置（纯数据解析，见配置库）----------
+hs_conf_load || true                    # 读不到时用下面的默认值
+CONF_READABLE=$HS_CONF_READABLE
 AP_IF=${AP_IF:-ap0}
 AP_IP=${AP_IP:-10.233.33.1}
-AP_NET=${AP_NET:-10.233.33.0/24}
+# 网段以 AP_IP 为唯一数据源（旧实现 AP_IP/AP_NET/写死 /24 三处各一份，改一处就打架）
+_ap_net=$(hs_derive_ap_net "$AP_IP" 2>/dev/null) || _ap_net=""
+if [ -z "$_ap_net" ]; then
+    log "AP_IP='$AP_IP' 不是合法 IPv4，按默认 10.233.33.1 处理"
+    AP_IP=10.233.33.1
+    _ap_net=10.233.33.0/24
+fi
+if [ -n "${AP_NET:-}" ] && [ "$AP_NET" != "$_ap_net" ]; then
+    log "配置里的 AP_NET=$AP_NET 与 AP_IP=$AP_IP 推导的 $_ap_net 不一致：以 AP_IP 为准（只支持 /24）"
+fi
+AP_NET=$_ap_net
 SSID=${SSID:-}
 PASS=${PASS:-}
 MODE=${MODE:-concurrent}
@@ -46,16 +79,24 @@ DHCP_START=${DHCP_START:-50}
 DHCP_END=${DHCP_END:-150}
 DHCP_DNS=${DHCP_DNS:-223.5.5.5,119.29.29.29}
 
-# STA_IF：留空或接口不存在时自动探测（第一个非 AP 的无线接口），
-# 避免"接口名写错 → 永远待命且毫无提示"。
+# STA_IF：留空或接口不存在时自动探测；探测优先取"已连接"的 Wi-Fi 设备，
+# 避免多网卡/插了 USB 网卡时挑到一块空闲网卡（评审 §3.2）。
 STA_IF=${STA_IF:-}
 sta_if_auto=no
+detect_sta_if(){
+    local d=""
+    d=$($NMCLI -t -f DEVICE,TYPE,STATE device status 2>/dev/null \
+        | awk -F: -v ap="$AP_IF" '$2=="wifi" && $3=="connected" && $1!=ap {print $1; exit}')
+    [ -n "$d" ] && { printf '%s' "$d"; return 0; }
+    d=$($IW dev 2>/dev/null | awk -v ap="$AP_IF" '
+        /Interface[ \t]/ { ifc=$2; next }
+        ifc != "" && ifc != ap && $1 == "type" && $2 != "AP" { print ifc; exit }')
+    [ -n "$d" ] && { printf '%s' "$d"; return 0; }
+    return 1
+}
 if [ -z "$STA_IF" ] || ! $IW dev "$STA_IF" info >/dev/null 2>&1; then
-    _detected=$($IW dev 2>/dev/null | awk '/Interface/{print $2}' | grep -vx "$AP_IF" | head -1)
-    if [ -n "${_detected:-}" ]; then
-        if [ -n "$STA_IF" ]; then
-            echo "[ctl] 配置的接口 $STA_IF 不存在，自动改用 $_detected" >&2
-        fi
+    if _detected=$(detect_sta_if); then
+        [ -n "$STA_IF" ] && log "配置的接口 $STA_IF 不存在，自动改用 $_detected"
         STA_IF=$_detected
         sta_if_auto=yes
     elif [ -z "$STA_IF" ]; then
@@ -63,77 +104,61 @@ if [ -z "$STA_IF" ] || ! $IW dev "$STA_IF" info >/dev/null 2>&1; then
     fi
 fi
 
-log(){ echo "[ctl] $*" >&2; }
-mkdir -p "$STATE" 2>/dev/null || true   # 免特权调用 status 时可能无权创建，忽略
-
 # ---------- 权限辅助 ----------
-# 无敏感信息的状态标记（disabled/fallback）做成可读，
+# 无敏感信息的状态标记（disabled/fallback/clients）做成可读，
 # 这样插件可以免特权（不 fork root/不建 polkit 会话）轮询 status。
 touch_public(){ : > "$1" 2>/dev/null || true; chmod 0644 "$1" 2>/dev/null || true; }
 
 # 配置含热点密码：root 属主 + 640，读取权限授予网络管理组
-#（组名由 deploy.sh 写入 $STATE/conf.group，一般为 netdev）。
-# 这与 polkit 规则授权的用户集合一致，因此不降低安全等级。
+#（组名由 deploy.sh 写入 $STATE/conf.group，取"用户实际所属"的组）。
 fix_conf_perm(){
     local g=""
     [ -r "$STATE/conf.group" ] && g=$(cat "$STATE/conf.group" 2>/dev/null)
-    [ -n "${g:-}" ] && chgrp "$g" "$CONF" 2>/dev/null || true
+    if [ -n "${g:-}" ]; then
+        chgrp "$g" "$CONF" 2>/dev/null || true
+    fi
     chmod 0640 "$CONF" 2>/dev/null || true
 }
 
-# ---------- 凭据有效性 ----------
-# 拒绝空值和 config.example 里的示例占位值：deploy.sh 会自动生成随机密码，
-# 但手工复制示例、或用户清空字段时必须明确拒绝，而不是拿一个公开已知的
-# 密码起热点。输出的第一行即"原因"。
-cred_problem(){
-    case "${SSID:-}" in
-        "") echo "热点名称未设置" ;;
-        my-hotspot|your-ssid*|change-me*|changeme*|example*) echo "热点名称仍是示例占位值（${SSID}）" ;;
-    esac
-    case "${PASS:-}" in
-        "") echo "热点密码未设置" ;;
-        change-me*|changeme*|your-password*|example*) echo "热点密码仍是示例占位值" ;;
-    esac
-    if [ -n "${SSID:-}" ] && [ "${#SSID}" -gt 32 ]; then echo "热点名称最长 32 个字符"; fi
-    if [ -n "${PASS:-}" ] && { [ "${#PASS}" -lt 8 ] || [ "${#PASS}" -gt 63 ]; }; then
-        echo "热点密码长度需 8-63 位"
-    fi
-}
-cred_ok(){ [ -z "$(cred_problem | head -1)" ]; }
-
-# ---------- 规则的拆除 ----------
-# ensure_rules（监督脚本）会加 NAT + 两条 FORWARD 放行 + 策略路由；
-# 关闭热点/切模式/停服务/卸载时都要拆掉，否则规则会留在系统里
-#（装了 iptables-persistent 时甚至跨重启残留）。
-remove_rules(){
-    local n
-    n=0; while $IPT -t nat -C POSTROUTING -s "$AP_NET" -o "$STA_IF" -j MASQUERADE 2>/dev/null; do
-        $IPT -t nat -D POSTROUTING -s "$AP_NET" -o "$STA_IF" -j MASQUERADE 2>/dev/null || break
-        n=$((n+1)); [ "$n" -gt 5 ] && break
-    done
-    n=0; while $IPT -C FORWARD -i "$AP_IF" -o "$STA_IF" -j ACCEPT 2>/dev/null; do
-        $IPT -D FORWARD -i "$AP_IF" -o "$STA_IF" -j ACCEPT 2>/dev/null || break
-        n=$((n+1)); [ "$n" -gt 5 ] && break
-    done
-    n=0; while $IPT -C FORWARD -i "$STA_IF" -o "$AP_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do
-        $IPT -D FORWARD -i "$STA_IF" -o "$AP_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || break
-        n=$((n+1)); [ "$n" -gt 5 ] && break
-    done
-    ip rule del from "$AP_NET" lookup main >/dev/null 2>&1 || true
-}
+clear_runtime_marks(){ rm -f "$STATE/fallback" "$CLIENTS" 2>/dev/null || true; }
 
 # ---------- 只读探测 ----------
-iface_type(){ $IW dev "$STA_IF" info 2>/dev/null | awk '/type/{print $2; exit}'; }
-iface_channel(){ $IW dev "$STA_IF" info 2>/dev/null | awk '/channel/{print $2; exit}'; }
-sta_conn(){
-    $NMCLI -t -f NAME,TYPE,DEVICE connection show --active 2>/dev/null \
-        | awk -F: -v d="$STA_IF" '$2=="802-11-wireless" && $3==d {print $1; exit}'
+# 一次 iw dev 取回 STA 的类型/信道与 ap0 的信道（旧实现要 4~5 次 iw+awk；status 每几秒一次）
+read_iw_dev(){
+    $IW dev 2>/dev/null | awk -v sta="$STA_IF" -v ap="$AP_IF" '
+        /^[^ \t]/ { ifc="" }
+        /Interface[ \t]/ { ifc=$2; next }
+        ifc == sta && $1 == "type"    { stype=$2 }
+        ifc == sta && $1 == "channel" { stach=$2 }
+        ifc == ap  && $1 == "channel" { apch=$2 }
+        END { print stype; print stach; print apch }'
 }
-ap0_channel(){ $IW dev "$AP_IF" info 2>/dev/null | awk '/channel/{print $2; exit}'; }
+# 一次 iw link 取回完整 SSID 与频率（iw dev 的 ssid 字段遇空格会被截断）
+read_iw_link(){
+    $IW dev "$1" link 2>/dev/null | awk '
+        /^[ \t]*SSID:/ { sub(/^[ \t]*SSID:[ \t]*/, ""); s=$0 }
+        /^[ \t]*freq:/ { sub(/^[ \t]*freq:[ \t]*/, ""); f=$0 }
+        END { print s; print f }'
+}
+band_of(){
+    if [ "${1:-0}" -le 14 ] 2>/dev/null; then printf '2.4G'; else printf '5G'; fi
+}
+sta_conn_name(){
+    $NMCLI -t -f NAME,TYPE,DEVICE connection show --active 2>/dev/null \
+        | awk -F: -v d="$STA_IF" -v ap="$NM_AP_CON" \
+            '$2=="802-11-wireless" && $3==d && $1!=ap {print $1; exit}'
+}
+sta_conn_uuid(){
+    $NMCLI -t -f UUID,NAME,TYPE,DEVICE connection show --active 2>/dev/null \
+        | awk -F: -v d="$STA_IF" -v ap="$NM_AP_CON" \
+            '$3=="802-11-wireless" && $4==d && $2!=ap {print $1; exit}'
+}
+conn_name_of(){ $NMCLI -t -g NAME connection show "$1" 2>/dev/null; }
 normal_running(){
-    $NMCLI -t -f NAME,DEVICE connection show --active 2>/dev/null | grep -q "^$NM_AP_CON:" && echo yes || echo no
+    $NMCLI -t -f NAME connection show --active 2>/dev/null | grep -qx "$NM_AP_CON" && echo yes || echo no
 }
 concurrent_running(){ systemctl is-active --quiet "$UNIT_MAIN" 2>/dev/null && echo yes || echo no; }
+dhcp_running(){ systemctl is-active --quiet "$UNIT_DHCP" 2>/dev/null && echo yes || echo no; }
 autostart_state(){
     if [ "$MODE" = normal ]; then
         systemctl is-enabled --quiet "$UNIT_NORMAL" 2>/dev/null && echo on || echo off
@@ -141,8 +166,53 @@ autostart_state(){
         systemctl is-enabled --quiet "$UNIT_MAIN" 2>/dev/null && echo on || echo off
     fi
 }
+# 在线客户端数：
+#  - 并发模式优先用监督脚本写的关联数（iw station dump，只有 root 看得到）
+#  - 否则退回 ARP 表（免特权可读，且比 DHCP 租约准：租约能留 12 小时，
+#    旧实现还硬编码 Debian 的 /var/lib/misc/dnsmasq.leases，非 Debian 恒为 0）
+count_clients(){
+    local ifc
+    if [ "${1:-}" = hostapd ] && [ -r "$CLIENTS" ]; then
+        cat "$CLIENTS" 2>/dev/null
+        return
+    fi
+    if [ "${1:-}" = nm ]; then ifc=$STA_IF; else ifc=$AP_IF; fi
+    awk -v d="$ifc" 'NR>1 && $NF==d && $3=="0x2" {n++} END {printf "%d\n", n+0}' "$ARP" 2>/dev/null || echo 0
+}
 
-# ---------- 两套机制的拆除（互斥保证） ----------
+# ---------- 规则的拆除 ----------
+# ensure_rules（监督脚本）按"当时的 STA_IF/AP_IF/AP_NET"插规则；接口名或网段改过之后
+# 必须按记录清理，否则旧规则残留（评审 §3.6-4）。记录见 $RUN/rules.state。
+_del_rules_for(){
+    local s=$1 a=$2 n=$3 cnt
+    cnt=0; while $IPT -t nat -C POSTROUTING -s "$n" -o "$s" -j MASQUERADE 2>/dev/null; do
+        $IPT -t nat -D POSTROUTING -s "$n" -o "$s" -j MASQUERADE 2>/dev/null || break
+        cnt=$((cnt + 1)); [ "$cnt" -gt 5 ] && break
+    done
+    cnt=0; while $IPT -C FORWARD -i "$a" -o "$s" -j ACCEPT 2>/dev/null; do
+        $IPT -D FORWARD -i "$a" -o "$s" -j ACCEPT 2>/dev/null || break
+        cnt=$((cnt + 1)); [ "$cnt" -gt 5 ] && break
+    done
+    cnt=0; while $IPT -C FORWARD -i "$s" -o "$a" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do
+        $IPT -D FORWARD -i "$s" -o "$a" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || break
+        cnt=$((cnt + 1)); [ "$cnt" -gt 5 ] && break
+    done
+    ip rule del from "$n" lookup main >/dev/null 2>&1 || true
+}
+remove_rules(){
+    local s="" a="" n="" have=""
+    if [ -r "$RULESTATE" ]; then
+        read -r s a n < "$RULESTATE" 2>/dev/null || true
+        if [ -n "${s:-}" ] && [ -n "${a:-}" ] && [ -n "${n:-}" ]; then
+            _del_rules_for "$s" "$a" "$n"
+            have="$s|$a|$n"
+        fi
+    fi
+    [ "$have" = "$STA_IF|$AP_IF|$AP_NET" ] || _del_rules_for "$STA_IF" "$AP_IF" "$AP_NET"
+    rm -f "$RULESTATE" 2>/dev/null || true
+}
+
+# ---------- 两套机制的拆除（互斥保证）----------
 stop_concurrent(){
     systemctl stop "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
     ip link set "$AP_IF" down >/dev/null 2>&1 || true
@@ -158,13 +228,12 @@ stop_normal(){
 
 # ---------- 频段偏好恢复（并发模式）----------
 # 备份（band.backup/band.conn）由监督脚本在"5GHz 被固件拒绝、自动降 2.4G"时写入；
-# ctl 不再主动改 STA 频段，只在关闭热点时按备份恢复。
+# ctl 不主动改 STA 频段，只在关闭热点时按备份恢复。
 restore_band(){
     [ -e "$BANDBACKUP" ] || return 0
     local c v
-    # 优先用备份时记录的连接名；恢复时 Wi-Fi 可能恰好断了
     c=$(cat "$CONNBACKUP" 2>/dev/null)
-    [ -n "${c:-}" ] || c=$(sta_conn)
+    [ -n "${c:-}" ] || c=$(sta_conn_name)
     v=$(cat "$BANDBACKUP" 2>/dev/null)
     rm -f "$BANDBACKUP" "$CONNBACKUP"
     if [ -n "${c:-}" ]; then
@@ -172,16 +241,32 @@ restore_band(){
         $NMCLI connection up "$c" >/dev/null 2>&1 || true
         log "已恢复 '$c' 的频段偏好（${v:-自动}）"
     else
-        log "频段备份已清理（找不到原连接 '$c'，无法恢复）"
+        log "频段备份已清理（找不到原连接，无法恢复）"
     fi
 }
 
+# 普通模式关闭时恢复"开启热点前被本程序断开"的 Wi-Fi；
+# 但如果用户已经在热点运行期间自己连上了别的 Wi-Fi，就不抢回来（评审 §3.3/GPT P1-4）。
+restore_sta_conn(){
+    [ -s "$STABACKUP" ] || return 0
+    local u cur
+    u=$(cat "$STABACKUP" 2>/dev/null)
+    cur=$(sta_conn_name)
+    if [ -n "${cur:-}" ]; then
+        log "当前已连接 '$cur'，不恢复热点开启前断开的连接"
+    elif [ -n "${u:-}" ]; then
+        $NMCLI connection up uuid "$u" >/dev/null 2>&1 || true
+        log "已恢复 Wi-Fi 连接 '$(conn_name_of "$u")'"
+    fi
+    rm -f "$STABACKUP"
+}
+
 # ---------- DHCP/DNS 配置渲染 ----------
-# dnsmasq 的 interface / dhcp-range / 网关全部由 config 推导，避免用户改了
-# AP_IF/AP_IP/AP_NET 之后 dnsmasq 静默失效（旧版把这三项写死在 dnsmasq.conf）。
+# dnsmasq 的 interface / dhcp-range / 网关全部由 AP_IP 推导，避免用户改了
+# AP_IP 之后 dnsmasq 静默失效（旧版把这三项写死在 dnsmasq.conf）。
 sync_dnsmasq(){
     local dnsf=/etc/kde-hotspot/dnsmasq.conf
-    local pre; pre=$(printf '%s' "$AP_IP" | cut -d. -f1-3)
+    local pre; pre=${AP_IP%.*}
     [ -n "${pre:-}" ] || pre=10.233.33
     local tmp; tmp=$(mktemp) || return 1
     {
@@ -201,19 +286,74 @@ sync_dnsmasq(){
 }
 
 # ---------- 清理（停服务后由 ExecStopPost 调用）----------
-# 恢复 Wi-Fi 频段偏好、拆掉 NAT/转发/策略路由、清掉回退标记。
+# 恢复 Wi-Fi 频段偏好、拆掉 NAT/转发/策略路由、清掉运行标记。
 # 不做停止动作（此时服务已经在停），因此可安全地被 ExecStopPost 调用。
 do_cleanup(){
     restore_band
     remove_rules
-    rm -f "$STATE/fallback"
-    log "已清理：Wi-Fi 频段偏好、NAT/转发规则、回退标记"
+    clear_runtime_marks
+    log "已清理：Wi-Fi 频段偏好、NAT/转发规则、运行标记"
+}
+
+# ---------- 开机自启 ----------
+# 自启状态直接读 systemctl is-enabled，因此三个单元必须一起处理，
+# 否则"并发→普通"切完主服务仍 enabled，再切回并发时自启会莫名其妙显示为开启（评审 §3.3b）。
+autostart_off(){
+    rm -f "$STATE/autostart-normal" 2>/dev/null || true
+    systemctl disable "$UNIT_MAIN" "$UNIT_DHCP" "$UNIT_NORMAL" >/dev/null 2>&1 || true
+}
+do_autostart(){
+    case "${1:-}" in on|off) ;; *) log "用法: autostart on|off"; return 2 ;; esac
+    if [ "$1" = on ]; then
+        # 自启=开 意味着"允许开机起热点"，所以要清掉"保持关闭"标记
+        rm -f "$DISABLED"
+        if [ "$MODE" = normal ]; then
+            systemctl disable "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
+            touch "$STATE/autostart-normal"
+            systemctl enable "$UNIT_NORMAL" >/dev/null 2>&1 || true
+        else
+            rm -f "$STATE/autostart-normal"
+            systemctl disable "$UNIT_NORMAL" >/dev/null 2>&1 || true
+            systemctl enable "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
+        fi
+        log "已启用开机自启（$MODE 模式）"
+        result true "已启用开机自启（$MODE 模式）"
+    else
+        autostart_off
+        log "已关闭开机自启"
+        result true "已关闭开机自启"
+    fi
 }
 
 # ---------- on / off ----------
+# 普通模式 profile：不存在 → 新建；已存在但 SSID/密码与当前 config 不一致 → 重建。
+# 旧实现"存在就跳过"：上次异常退出（掉电/被杀）残留的 profile 会用旧密码起热点（评审 §3.6-2）。
+ensure_normal_profile(){
+    local cur_ssid="" cur_psk=""
+    if $NMCLI -t -f NAME connection show 2>/dev/null | grep -qx "$NM_AP_CON"; then
+        cur_ssid=$($NMCLI --show-secrets -t -g 802-11-wireless.ssid connection show "$NM_AP_CON" 2>/dev/null)
+        cur_psk=$($NMCLI --show-secrets -t -g 802-11-wireless-security.psk connection show "$NM_AP_CON" 2>/dev/null)
+        if [ "$cur_ssid" = "$SSID" ] && [ "$cur_psk" = "$PASS" ]; then
+            return 0
+        fi
+        log "普通模式 profile 的 SSID/密码与当前配置不一致，重建"
+        $NMCLI connection delete "$NM_AP_CON" >/dev/null 2>&1 || true
+    fi
+    $NMCLI connection add type wifi ifname "$STA_IF" con-name "$NM_AP_CON" autoconnect no \
+        802-11-wireless.mode ap \
+        802-11-wireless.band bg \
+        802-11-wireless.channel "$NORMAL_CHANNEL" \
+        802-11-wireless.ssid "$SSID" \
+        802-11-wireless-security.key-mgmt wpa-psk \
+        802-11-wireless-security.psk "$PASS" \
+        ipv4.method shared >/dev/null 2>&1 || return 1
+    log "已创建普通模式热点 profile（ch$NORMAL_CHANNEL, shared）"
+    return 0
+}
+
 do_on(){
-    if ! cred_ok; then
-        local why; why=$(cred_problem | head -1)
+    if ! hs_cred_ok; then
+        local why; why=$(hs_cred_problem | head -1)
         log "错误：$why（请编辑 /etc/kde-hotspot/config）"
         result false "$why（请编辑 /etc/kde-hotspot/config）"
         return 1
@@ -222,22 +362,18 @@ do_on(){
     case "$MODE" in
       normal)
         stop_concurrent
-        local c; c=$(sta_conn)
-        if [ -n "${c:-}" ]; then
-            echo "$c" > "$STABACKUP"
-            $NMCLI connection down "$c" >/dev/null 2>&1 || true
-            log "已断开 Wi-Fi 客户端连接 '$c'（普通模式必须）"
+        stop_normal
+        local c cu
+        c=$(sta_conn_name); cu=$(sta_conn_uuid)
+        if [ -n "${cu:-}" ]; then
+            printf '%s\n' "$cu" > "$STABACKUP"
+            $NMCLI connection down uuid "$cu" >/dev/null 2>&1 || true
+            log "已断开 Wi-Fi 客户端连接 '${c:-$cu}'（普通模式必须）"
         fi
-        if ! $NMCLI -t -f NAME connection show 2>/dev/null | grep -qx "$NM_AP_CON"; then
-            $NMCLI connection add type wifi ifname "$STA_IF" con-name "$NM_AP_CON" autoconnect no \
-                802-11-wireless.mode ap \
-                802-11-wireless.band bg \
-                802-11-wireless.channel "$NORMAL_CHANNEL" \
-                802-11-wireless.ssid "$SSID" \
-                802-11-wireless-security.key-mgmt wpa-psk \
-                802-11-wireless-security.psk "$PASS" \
-                ipv4.method shared >/dev/null 2>&1 || { log "创建热点 profile 失败"; result false "创建热点 profile 失败"; return 1; }
-            log "已创建普通模式热点 profile（ch$NORMAL_CHANNEL, shared）"
+        if ! ensure_normal_profile; then
+            log "创建/更新热点 profile 失败"
+            result false "创建热点 profile 失败"
+            return 1
         fi
         $NMCLI connection up "$NM_AP_CON" >/dev/null 2>&1 || { log "激活普通模式热点失败"; result false "激活普通模式热点失败"; return 1; }
         log "普通模式热点已开启（SSID=$SSID）"
@@ -253,6 +389,12 @@ do_on(){
             result false "服务启动失败，见 journalctl -u kde-hotspot"
             return 1
         fi
+        # DHCP 挂了客户端会拿不到 IP，但面板原来只检查主服务，会一直显示"运行中"（评审 §3.6-7）
+        if ! systemctl is-active --quiet "$UNIT_DHCP"; then
+            log "DHCP 服务启动失败（客户端会拿不到 IP），见 journalctl -u kde-hotspot-dhcp"
+            result false "热点已启动但 DHCP 服务失败（客户端拿不到 IP），见 journalctl -u kde-hotspot-dhcp"
+            return 1
+        fi
         log "并发模式已开启（热点跟随 Wi-Fi 当前信道；固件不支持 5G 时自动回退 2.4GHz）"
         # 措辞如实：此时只是指令已下发，hostapd 尚未发信标
         result true "开启指令已下发，热点正在启动（将跟随 Wi-Fi 信道发信标）"
@@ -260,77 +402,102 @@ do_on(){
     esac
 }
 
+# off = 关闭并保持关闭：置 disabled 标记（监督脚本据此不起热点），
+# 同时关掉开机自启——否则普通模式下次开机又会自己打开热点并断开 Wi-Fi（评审 §3.3a）。
 do_off(){
+    local was_auto=no
+    [ "$(autostart_state)" = on ] && was_auto=yes
+    touch_public "$DISABLED"
     case "$MODE" in
       normal)
         stop_normal
-        if [ -s "$STABACKUP" ]; then
-            local c; c=$(cat "$STABACKUP")
-            $NMCLI connection up "$c" >/dev/null 2>&1 || true
-            rm -f "$STABACKUP"
-            log "已恢复 Wi-Fi 连接 '$c'"
-        fi
-        log "普通模式热点已关闭"
-        result true "普通模式热点已关闭，Wi-Fi 已恢复"
+        restore_sta_conn
         ;;
       *)
-        touch_public "$DISABLED"
         stop_concurrent
         restore_band
-        rm -f "$STATE/fallback"
-        log "并发模式热点已关闭（保持关闭，直到重新开启）"
-        result true "热点已关闭，并保持关闭（Wi-Fi 频段偏好已恢复）"
         ;;
     esac
+    autostart_off
+    clear_runtime_marks
+    log "热点已关闭（保持关闭）；开机自启已关闭"
+    if [ "$was_auto" = yes ]; then
+        result true "热点已关闭并保持关闭；开机自启已关闭（需要的话请重新打开）"
+    else
+        result true "热点已关闭并保持关闭"
+    fi
 }
 
 do_mode(){
     local m="${1:-}"
-    case "$m" in concurrent|normal) ;; *) log "模式必须是 concurrent 或 normal"; return 2;; esac
+    case "$m" in concurrent|normal) ;; *) log "模式必须是 concurrent 或 normal"; return 2 ;; esac
     # 切换模式时先停两套、并临时置 disabled 防止服务自己又起来
     touch_public "$DISABLED"
     stop_normal
     stop_concurrent
-    if grep -q '^MODE=' "$CONF" 2>/dev/null; then
-        sed -i "s/^MODE=.*/MODE=$m/" "$CONF"
-    else
-        printf '\nMODE=%s\n' "$m" >> "$CONF"
+    if ! hs_conf_set MODE "$m"; then
+        log "写入配置失败"
+        result false "写入配置失败"
+        return 1
     fi
     fix_conf_perm
     MODE="$m"
-    # 模式切换后自启统一关闭（普通模式自启会在开机时断开 Wi-Fi，必须用户显式开启）
-    rm -f "$STATE/autostart-normal"
-    rm -f "$STATE/fallback"
-    systemctl disable "$UNIT_NORMAL" >/dev/null 2>&1 || true
-    log "已切换到 $m 模式；两套热点机制都已停止，需要时再手动开启；自启已关闭，需要的话请重新打开"
+    # 三个单元一起 disable（理由见 autostart_off 注释）
+    autostart_off
+    clear_runtime_marks
+    log "已切换到 $m 模式；两套热点机制都已停止；自启已关闭，需要的话请重新打开"
     result true "已切换到${m}模式；热点已停止；自启已关闭（需重新打开）"
 }
 
-do_autostart(){
-    case "${1:-}" in on|off) ;; *) log "用法: autostart on|off"; return 2;; esac
-    if [ "$1" = on ]; then
-        if [ "$MODE" = normal ]; then
-            systemctl disable "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
-            touch "$STATE/autostart-normal"
-            systemctl enable "$UNIT_NORMAL" >/dev/null 2>&1 || true
-        else
-            rm -f "$STATE/autostart-normal"
-            systemctl disable "$UNIT_NORMAL" >/dev/null 2>&1 || true
-            systemctl enable "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
-        fi
-        log "已启用开机自启（$MODE 模式）"
-        result true "已启用开机自启（$MODE 模式）"
-    else
-        rm -f "$STATE/autostart-normal"
-        systemctl disable "$UNIT_MAIN" "$UNIT_DHCP" "$UNIT_NORMAL" >/dev/null 2>&1 || true
-        log "已关闭开机自启"
-        result true "已关闭开机自启"
-    fi
-}
-
 # ---------- 修改热点名称/密码 ----------
+# --pass-file 的路径校验：
+# 旧实现允许任意路径，本地用户可以让 root 读 /etc/shadow 之类文件并把内容当密码写进
+# 配置，再借 `status` 读出来（GPT P0-2）；旧前端还用可预测的 /tmp 文件名（GPT P0-3）。
+# 现在只接受"调用者自己的私有目录"里的普通文件：目录属主必须是调用者且不允许他人写
+# （$XDG_RUNTIME_DIR 或 mktemp -d 出来的目录都满足），文件不得是符号链接、
+# 不得有 group/other 权限位、不能过大。
+pass_file_problem(){
+    local f=${1:-} uid duid dmode fuid fmode fsize dir
+    [ -n "$f" ] || { echo "密码文件路径为空"; return 0; }
+    [ -L "$f" ] && { echo "拒绝符号链接形式的密码文件"; return 0; }
+    [ -f "$f" ] || { echo "密码文件不存在或不是普通文件"; return 0; }
+    uid=${PKEXEC_UID:-0}
+    fuid=$(stat -c %u "$f" 2>/dev/null)
+    fmode=$(stat -c %a "$f" 2>/dev/null)
+    fsize=$(stat -c %s "$f" 2>/dev/null)
+    [ -n "$fuid" ] || { echo "读不到密码文件属性"; return 0; }
+    [ "$fuid" = "$uid" ] || { echo "密码文件属主不是调用者"; return 0; }
+    [ $(( 0${fmode} & 077 )) -eq 0 ] || { echo "密码文件权限过宽（${fmode}），必须是 600"; return 0; }
+    [ "${fsize:-0}" -le "$PASS_FILE_MAX" ] || { echo "密码文件过大"; return 0; }
+    dir=$(dirname -- "$f")
+    duid=$(stat -c %u "$dir" 2>/dev/null)
+    dmode=$(stat -c %a "$dir" 2>/dev/null)
+    [ -n "$duid" ] || { echo "读不到密码文件目录属性"; return 0; }
+    [ "$duid" = "$uid" ] || { echo "密码文件所在目录不属于调用者，拒绝（请更新插件）"; return 0; }
+    [ $(( 0${dmode} & 022 )) -eq 0 ] || { echo "密码文件所在目录允许他人写入，拒绝"; return 0; }
+    return 1
+}
+# 成功：stdout = 密码，返回 0。失败：stdout = 拒绝原因，返回 1。
+# 注意失败时**只**把原因写给调用方（走 stdout 被命令替换捕获），
+# 由调用方负责 result/log——否则调用方 `if ! p=$(read_pass_file ...)` 会把
+# JSON 当成密码，或者 JSON 被吞进变量、面板看不到任何输出。
+read_pass_file(){
+    local f=${1:-} why pass dir
+    why=$(pass_file_problem "$f")
+    if [ -n "$why" ]; then
+        printf '%s' "$why"
+        return 1
+    fi
+    pass=$(cat -- "$f" 2>/dev/null || true)
+    rm -f -- "$f" 2>/dev/null || true
+    dir=$(dirname -- "$f")
+    case "$dir" in
+        */kde-hotspot-pass.*) rmdir -- "$dir" 2>/dev/null || true ;;
+    esac
+    printf '%s' "$pass"
+}
 set_credentials(){
-    local ssid="" pass="" pf=""
+    local ssid="" pass="" pf="" have_pass=no why=""
     # 解析：set-credentials SSID [PASS|-] [--pass-file FILE]
     # PASS 为 "-" 时从 stdin 读；--pass-file 从 600 文件读后删除（避免密码进 argv）
     while [ "$#" -gt 0 ]; do
@@ -349,57 +516,50 @@ set_credentials(){
         esac
     done
     if [ -n "$pf" ]; then
-        pass=$(cat "$pf" 2>/dev/null || true)
-        rm -f "$pf" 2>/dev/null || true
+        local _p
+        if ! _p=$(read_pass_file "$pf"); then
+            log "拒绝密码文件：$_p"
+            result false "密码文件不被接受：$_p"
+            return 1
+        fi
+        pass=$_p
+        have_pass=yes
     elif [ "$pass" = "-" ]; then
         IFS= read -r pass || pass=""
+        have_pass=yes
+    elif [ -n "$pass" ]; then
+        have_pass=yes
     fi
-    case "$ssid" in *$'\n'*) log "SSID 不能含换行"; result false "SSID 不能含换行"; return 1;; esac
-    case "$pass" in *$'\n'*) log "密码不能含换行"; result false "密码不能含换行"; return 1;; esac
-    [ -n "$ssid" ] || { log "SSID 不能为空"; result false "SSID 不能为空"; return 1; }
-    [ "${#ssid}" -le 32 ] || { log "SSID 最长 32 个字符"; result false "SSID 最长 32 个字符"; return 1; }
-    case "$ssid" in
-        my-hotspot|your-ssid*|change-me*|changeme*|example*)
-            log "拒绝把名称设为示例占位值：$ssid"; result false "请换一个热点名称（不能是示例占位值）"; return 1 ;;
-    esac
-    if [ -n "$pass" ]; then
-        if [ "${#pass}" -lt 8 ] || [ "${#pass}" -gt 63 ]; then
-            log "密码长度需 8-63 位"; result false "密码长度需 8-63 位"; return 1
-        fi
-        case "$pass" in
-            change-me*|changeme*|your-password*|example*)
-                log "拒绝把密码设为示例占位值"; result false "请换一个密码（不能是示例占位值）"; return 1 ;;
-        esac
+    case "$ssid" in *$'\n'*|*$'\r'*) log "SSID 不能含换行"; result false "SSID 不能含换行"; return 1 ;; esac
+    case "$pass" in *$'\n'*|*$'\r'*) log "密码不能含换行"; result false "密码不能含换行"; return 1 ;; esac
+    # 用与启动时同一套校验（含控制字符/长度/示例占位值，见配置库）。
+    # 只改名称时，校验的是配置里现存的密码——避免把配置改成"下次开不了热点"的状态。
+    local check_pass
+    if [ "$have_pass" = yes ]; then check_pass=$pass; else check_pass=$PASS; fi
+    why=$(hs_cred_problem "$ssid" "$check_pass" | head -1)
+    if [ -n "$why" ]; then
+        log "拒绝：$why"
+        result false "$why"
+        return 1
     fi
-    local tmp; tmp=$(mktemp) || { result false "无法创建临时文件"; return 1; }
-    cp -a "$CONF" "$tmp" 2>/dev/null || true
-    # 用 awk 重写整行；值经环境变量传入（-v 会解释反斜杠转义，密码含 \ 时会被改写）
-    ZK_SSID="$ssid" ZK_PASS="$pass" awk '
-        /^SSID=/ { print "SSID=" ENVIRON["ZK_SSID"]; done_ssid=1; next }
-        /^PASS=/ {
-            # 密码留空表示"只改名称"，此时必须保留原有 PASS 行；
-            # 旧实现直接跳过该行 → 会把密码从配置里删掉
-            if (ENVIRON["ZK_PASS"] != "") print "PASS=" ENVIRON["ZK_PASS"]; else print
-            done_pass=1; next
-        }
-        { print }
-        END {
-            if (!done_ssid) print "SSID=" ENVIRON["ZK_SSID"]
-            if (ENVIRON["ZK_PASS"] != "" && !done_pass) print "PASS=" ENVIRON["ZK_PASS"]
-        }' "$CONF" > "$tmp" 2>/dev/null || { rm -f "$tmp"; result false "写入配置失败"; return 1; }
-    install -m 640 -o root -g root "$tmp" "$CONF"
-    rm -f "$tmp"
+    if [ "$have_pass" = yes ]; then
+        hs_conf_set SSID "$ssid" PASS "$pass" || { log "写入配置失败"; result false "写入配置失败"; return 1; }
+        SSID=$ssid; PASS=$pass
+    else
+        hs_conf_set SSID "$ssid" || { log "写入配置失败"; result false "写入配置失败"; return 1; }
+        SSID=$ssid
+    fi
     fix_conf_perm
-    SSID="$ssid"; [ -n "$pass" ] && PASS="$pass"
-    log "已更新配置：SSID=$ssid$([ -n "$pass" ] && echo "，密码已更新")"
+    log "已更新配置：SSID=$ssid$([ "$have_pass" = yes ] && echo "，密码已更新")"
 
-    # 若某个机制正在运行，重启让新配置生效
+    # 正在运行的机制立刻按新配置重启。注意"待命中的并发服务"内存里还是旧配置，
+    # 只按 ap0 有没有信道判断会漏掉它（评审 §3.6-1）。
     if [ "$MODE" = normal ] && [ "$(normal_running)" = yes ]; then
         stop_normal
         do_on >/dev/null 2>&1 || true
         log "已按新配置重启普通模式热点"
         result true "已保存并重启热点：SSID=$ssid"
-    elif [ "$(concurrent_running)" = yes ] && [ -n "$(ap0_channel)" ]; then
+    elif [ "$(concurrent_running)" = yes ]; then
         systemctl restart "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
         log "已按新配置重启并发模式热点（数秒后重新发信标）"
         result true "已保存并重启热点：SSID=$ssid"
@@ -410,54 +570,80 @@ set_credentials(){
 }
 
 # ---------- JSON 状态 ----------
-jstr(){ printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+# 转义 \ " 以及 0x00-0x1f 控制字符。旧实现只转义 \ 和 "：SSID 是 0-32 字节任意内容，
+# 带控制字符时 JSON 非法 → 插件 JSON.parse 抛错 → 面板显示 "Backend unavailable"（评审 §3.4）。
+jstr(){
+    local s=${1-} out="" i=0 n c hex
+    local LC_ALL=C
+    n=${#s}
+    while [ "$i" -lt "$n" ]; do
+        c=${s:i:1}
+        case "$c" in
+            "\\") out+="\\\\" ;;
+            '"') out+='\"' ;;
+            $'\n') out+='\n' ;;
+            $'\r') out+='\r' ;;
+            $'\t') out+='\t' ;;
+            $'\b') out+='\b' ;;
+            $'\f') out+='\f' ;;
+            [[:cntrl:]])
+                printf -v hex '%02x' "'$c"
+                out+="\\u00${hex}"
+                ;;
+            *) out+=$c ;;
+        esac
+        i=$((i + 1))
+    done
+    printf '%s' "$out"
+}
 
 # 动作类命令向 stdout 输出一行 JSON 结果（人类可读日志仍走 stderr），
 # 插件据此判断成败——不再依赖 exitCode 的类型（executable 引擎里可能是字符串）
 result(){ printf '{"ok":%s,"message":"%s"}\n' "$1" "$(jstr "$2")"; }
 
 do_status(){
-    local it ch freq ssid band conn=no hot=no hch="" hband="" mech=none gw=""
-    it=$(iface_type); ch=$(iface_channel)
-    ssid=$($IW dev "$STA_IF" info 2>/dev/null | awk '/ssid/{print $2; exit}')
-    freq=$($IW dev "$STA_IF" info 2>/dev/null | grep -oE '\([0-9]+ MHz\)' | tr -dc '0-9')
+    local stype="" stach="" apch=""
+    { read -r stype; read -r stach; read -r apch; } <<< "$(read_iw_dev)"
+    local ssid="" freq=""
+    { read -r ssid; read -r freq; } <<< "$(read_iw_link "$STA_IF")"
 
-    if [ "$it" = "AP" ]; then
-        # 普通模式：同一网卡就是 AP，没有客户端连接信息
-        conn=no; band=""
-    else
-        if [ -n "${ch:-}" ]; then
-            conn=yes
-            if [ "$ch" -le 14 ] 2>/dev/null; then band=2.4G; else band=5G; fi
-        fi
+    # 服务状态：一次 systemctl show 拿两个单元，省一次进程创建
+    local svc_main="" svc_dhcp=""
+    { read -r svc_main; read -r svc_dhcp; } <<< "$(systemctl show -p ActiveState --value "$UNIT_MAIN" "$UNIT_DHCP" 2>/dev/null)"
+    local conc=no; [ "$svc_main" = active ] && conc=yes
+    local dhcp=no; [ "$svc_dhcp" = active ] && dhcp=yes
+
+    local conn=no band=""
+    if [ "$stype" = "AP" ]; then
+        conn=no; band=""          # 普通模式：同一网卡就是 AP，没有客户端连接信息
+    elif [ -n "${stach:-}" ]; then
+        conn=yes
+        band=$(band_of "$stach")
     fi
 
+    local hot=no mech=none hch="" hband="" gw="" nmact=no
     if [ "$MODE" = normal ]; then
-        if [ "$(normal_running)" = yes ]; then
-            hot=yes; mech=nm; hch=$ch; [ -n "${ch:-}" ] && { if [ "$ch" -le 14 ] 2>/dev/null; then hband=2.4G; else hband=5G; fi; }
+        nmact=$(normal_running)
+        if [ "$nmact" = yes ]; then
+            hot=yes; mech="nm"; hch=$stach
+            [ -n "${stach:-}" ] && hband=$(band_of "$stach")
         fi
     else
-        if [ -n "$(ap0_channel)" ]; then
-            hot=yes; mech=hostapd; hch=$(ap0_channel); gw="$AP_IP"
-            # 频段按 ap0 实际信道推导：5GHz 并发热点（固件支持时）就该显示 5G，
-            # 否则面板会出现"2.4G ch44"这种自相矛盾的显示
-            if [ "${hch:-0}" -le 14 ] 2>/dev/null; then hband=2.4G; else hband=5G; fi
-        elif [ "$(concurrent_running)" = yes ]; then
-            mech=hostapd
+        if [ -n "${apch:-}" ]; then
+            hot=yes; mech="hostapd"; hch=$apch; gw=$AP_IP; hband=$(band_of "$apch")
+        elif [ "$conc" = yes ]; then
+            mech="hostapd"
         fi
     fi
 
     local disabled=false; [ -e "$DISABLED" ] && disabled=true
     local fb=false; [ -e "$STATE/fallback" ] && fb=true
-    local iface_present=yes; $IW dev "$STA_IF" info >/dev/null 2>&1 || iface_present=no
+    local iface_present=yes; [ -n "${stype:-}" ] || iface_present=no
     local clients=0
-    if [ -r /var/lib/misc/dnsmasq.leases ]; then
-        clients=$(grep -c . /var/lib/misc/dnsmasq.leases 2>/dev/null || true)
-        clients=${clients:-0}
-    fi
+    [ "$hot" = yes ] && clients=$(count_clients "$mech")
 
     printf '{\n'
-    printf '  "mode": "%s",\n' "$MODE"
+    printf '  "mode": "%s",\n' "$(jstr "$MODE")"
     printf '  "disabled": %s,\n' "$disabled"
     printf '  "autostart": "%s",\n' "$(autostart_state)"
     # 配置不可读（用户不在授权组）时，mode/SSID/PASS 都是默认值/空值，
@@ -465,11 +651,11 @@ do_status(){
     printf '  "config_readable": %s,\n' "$([ "$CONF_READABLE" = yes ] && echo true || echo false)"
     printf '  "sta_if_auto": %s,\n' "$([ "$sta_if_auto" = yes ] && echo true || echo false)"
     printf '  "wifi": {"iface": "%s", "present": "%s", "type": "%s", "connected": "%s", "ssid": "%s", "channel": "%s", "freq": "%s", "band": "%s"},\n' \
-        "$STA_IF" "$iface_present" "$(jstr "${it:-}")" "$conn" "$(jstr "${ssid:-}")" "${ch:-}" "${freq:-}" "${band:-}"
-    printf '  "hotspot": {"running": "%s", "mechanism": "%s", "ssid": "%s", "pass": "%s", "channel": "%s", "band": "%s", "gateway": "%s", "clients": %s, "fallback": %s},\n' \
-        "$hot" "$mech" "$(jstr "$SSID")" "$(jstr "$PASS")" "${hch:-}" "${hband:-}" "${gw:-}" "$clients" "$fb"
-    printf '  "concurrent_service_active": "%s",\n' "$(concurrent_running)"
-    printf '  "normal_service_active": "%s"\n' "$(normal_running)"
+        "$(jstr "$STA_IF")" "$iface_present" "$(jstr "${stype:-}")" "$conn" "$(jstr "${ssid:-}")" "${stach:-}" "${freq:-}" "${band:-}"
+    printf '  "hotspot": {"running": "%s", "mechanism": "%s", "ssid": "%s", "pass": "%s", "channel": "%s", "band": "%s", "gateway": "%s", "clients": %s, "fallback": %s, "dhcp_active": "%s"},\n' \
+        "$hot" "$mech" "$(jstr "$SSID")" "$(jstr "$PASS")" "${hch:-}" "${hband:-}" "${gw:-}" "$clients" "$fb" "$dhcp"
+    printf '  "concurrent_service_active": "%s",\n' "$conc"
+    printf '  "normal_service_active": "%s"\n' "$nmact"
     printf '}\n'
 }
 
@@ -486,14 +672,14 @@ case "${1:-}" in
   *) cat >&2 <<EOF
 用法: kde-hotspot-ctl <命令>
   on                     按当前模式开启热点
-  off                    关闭热点
+  off                    关闭热点（保持关闭，并关闭开机自启）
   mode concurrent|normal 切换模式（会先停掉两套机制）
   autostart on|off       开机自启
   set-credentials SSID [PASS]   改热点名称/密码
         PASS 省略=只改名称；PASS 为 - =从 stdin 读；--pass-file FILE =从文件读后删除
-  cleanup                清理残留（恢复频段偏好、拆除 NAT/转发规则、清回退标记）
+  cleanup                清理残留（恢复频段偏好、拆除 NAT/转发规则、清运行标记）
   sync-helpers           按 config 重新生成 dnsmasq.conf
-  status --json          状态 JSON
+  status                 状态 JSON
 EOF
      exit 2 ;;
 esac

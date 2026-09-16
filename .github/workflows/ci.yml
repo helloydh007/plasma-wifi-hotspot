@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: 后端与测试（bash -n / shellcheck / 单测）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+
+      # 与本地完全同一套检查：语法、shellcheck、配置库单测、
+      # 控制脚本 mock 端到端测试、backend 与插件包内副本一致性、QML 语法（若装了 qmllint）
+      - name: 全部检查
+        run: bash tests/run-all.sh
+
+  qml:
+    name: QML 语法（qmllint）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 qmllint（失败则跳过本 job 的检查）
+        id: qml
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qt6-declarative-dev-tools
+
+      - name: QML 语法检查
+        if: steps.qml.outcome == 'success'
+        run: |
+          out=$(qmllint plasmoid/contents/ui/*.qml 2>&1 || true)
+          printf '%s\n' "$out" | head -60
+          # CI 里没有 Plasma 的 QML 模块，import 解析不了会有大量
+          # “Property does not exist / Unqualified access” 噪音警告，不算失败；
+          # 但只要出现语法错误就必须拦下来。
+          if printf '%s\n' "$out" | grep -qi 'Syntax error'; then
+            echo "::error::QML 有语法错误"
+            exit 1
+          fi
+          echo "QML 语法 OK（import 相关的警告已忽略）"

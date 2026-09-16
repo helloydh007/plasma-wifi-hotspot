@@ -140,6 +140,19 @@ QQC2.ScrollView {
             text: i18n("⚠ 5GHz was refused by the hardware, the hotspot fell back to 2.4GHz. Wi-Fi moved to 2.4G; the band preference is restored when the hotspot is turned off.")
         }
 
+        // 热点在发信标、DHCP 却没起来：客户端能连上却拿不到 IP。
+        // 后端 status 一直报 DHCP 状态，面板不能只显示“运行中”把故障咽下去。
+        QQC2.Label {
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.smallSpacing
+            Layout.rightMargin: Kirigami.Units.smallSpacing
+            visible: root.dhcpMissing
+            wrapMode: Text.WordWrap
+            color: Kirigami.Theme.negativeTextColor
+            font.pointSize: Kirigami.Theme.smallFont.pointSize
+            text: i18n("⚠ The hotspot is beaconing but DHCP (dnsmasq) is not running, so clients will connect but get no IP address. Check journalctl -u kde-hotspot-dhcp.")
+        }
+
         // ---------- 主开关 ----------
         QQC2.Label {
             Layout.fillWidth: true

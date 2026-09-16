@@ -4,6 +4,8 @@ Plasma 6 系统托盘插件 + 后端服务，用来一键开关 Wi-Fi 热点，�
 
 **English documentation: [README.en.md](README.en.md)**（英文简介页，中文为主文档）
 
+变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+
 ![插件界面](docs/screenshot.png)
 
 在 Debian 13 + KDE Plasma 6.3（Intel AX201 / iwlwifi）上开发并实测通过。
@@ -94,9 +96,15 @@ bash install.sh
 5. **刷新界面**：插件内容变化时才重启 plasmashell（见下"更新"一节）
 
 **首次安装会自动生成随机热点名称与密码**（形如 `kde-hotspot-4821` / 14 位随机串）并在部署结束时打印一次，
-装完即可用。想改就在面板里改，或编辑 `/etc/kde-hotspot/config`。
+装完即可用。想改就在面板里改，或编辑 `/etc/kde-hotspot/config`（手工改完执行
+`sudo systemctl restart kde-hotspot kde-hotspot-dhcp` 生效；面板里改会自动重启，不用手动）。
 配置文件里 SSID/PASS 为空、或仍是示例占位值（`my-hotspot`、`change-me-*` 等）时，后端**拒绝启动热点**——
 不会用公开已知的密码起热点。`config.example` 里还列了 `FALLBACK_2G`、`COUNTRY`、`NORMAL_CHANNEL`、`DHCP_*` 等可选项。
+
+> 配置文件是**纯数据**（`KEY=value`，`#`/`;` 注释，未知键忽略），**不会被 shell 执行**：
+> 里面写 `$(...)`、反引号、`$$` 都只是普通字符，不会被求值——所以热点名/密码不会被悄悄改写，也不存在
+> "以 root 执行配置文件内容"这种问题。写回时只重写被改的那一行（保留该行行尾注释和文件其它内容），
+> 取值里除 `A-Za-z0-9._:/@%+,-` 之外的字符会被单引号包起来，避免格式被破坏。
 
 装完收尾一步：把插件放进托盘：右键面板 → 系统托盘设置 → 条目 → 勾选"Wi-Fi 热点控制"；
 或者直接拖到面板上（放在面板上会额外显示频段/信道文字，托盘里只显示图标）。
@@ -127,8 +135,14 @@ polkit 动作文件。升级后无需手工操作。
 ## 使用
 
 - 点托盘图标 → 面板：状态、开/关、模式单选、开机自启、依赖自检
-- **开**：并发模式下会自动把 Wi-Fi 切到 2.4GHz 并起草热点；普通模式下会先断开 Wi-Fi 再起 AP（面板上有明确提示）
-- **关**：并发模式下会停热点并把 Wi-Fi 的频段偏好恢复成关闭前的值（通常回 5GHz）
+- **开**：并发模式下会跟随 Wi-Fi 当前信道起草热点（被固件拒绝 5GHz 时自动降 2.4GHz）；普通模式下会先断开 Wi-Fi 再起 AP（面板上有明确提示）
+  - 点"开启"后 15 秒内还没发出信标，面板会停在"**开启中…**"（此时再点一次就是**取消**）
+  - 主服务起来了但 DHCP（dnsmasq）没起来时，面板会**明确报 DHCP 不可用**并展开一条警告横幅——以前这种情况会显示成"运行中"，
+    客户端连得上却拿不到 IP，很难排查
+- **关**：停热点 + 把 Wi-Fi 频段偏好恢复成关闭前的值（通常回 5GHz）+ **同时关掉开机自启**，并写下"保持关闭"标记：
+  这样重启、插拔网卡、NetworkManager 重连都不会自己又冒出一个热点；想恢复自启，重新打开"开机自启"开关即可
+- **切换模式**：停掉两套机制、关掉开机自启、写入新模式；下一次"开启"就按新模式来
+- **改名称/密码**：面板里直接改；运行中的热点会自动重启使新值生效（待命中的并发服务也会一起重启）
 - 右键托盘图标 → "配置 Wi-Fi 热点控制…"：设置显示标签、刷新间隔
 
 ### 桌面入口怎么打开
@@ -149,6 +163,9 @@ pkexec /usr/local/sbin/kde-hotspot-ctl on|off          # 按当前模式开关
 pkexec /usr/local/sbin/kde-hotspot-ctl mode concurrent|normal
 pkexec /usr/local/sbin/kde-hotspot-ctl autostart on|off
 pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> [<新密码>]
+pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> -            # 密码从 stdin 读
+pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> --pass-file F # 只接受调用者私有目录里的 600 普通文件
+pkexec /usr/local/sbin/kde-hotspot-ctl cleanup       # 拆掉残留的 NAT/转发/策略路由与频段备份（排障、卸载用）
 ```
 
 动作类命令会在 stdout 输出一行 JSON（`{"ok":true,"message":"…"}`），人类可读日志走 stderr——
@@ -167,13 +184,15 @@ pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> [<新密码>]
 | 文件 | 作用 |
 |---|---|
 | `plasmoid/` | Plasma 6 插件包（`kpackagetool6 -t Plasma/Applet -i plasmoid`） |
-| `backend/kde-hotspot-ctl` | **唯一的特权入口**：on/off/mode/autostart/set-credentials/status |
+| `backend/kde-hotspot-ctl` | **唯一的特权入口**：on/off/mode/autostart/set-credentials/status/cleanup |
+| `backend/kde-hotspot-config.sh` | 配置读写库（解析 / 校验 / 原子写回；纯数据格式，绝不被 `source`）|
 | `backend/kde-hotspot.sh` | 并发模式监督循环：跟随 Wi-Fi 信道起停 hostapd；遵守"保持关闭"标记 |
 | `backend/kde-hotspot{,-dhcp,-normal}.service` | systemd 单元（后者是普通模式的开机自启） |
 | `backend/io.github.helloydh007.hotspotctl.policy` + `49-kde-hotspot.rules` | polkit 动作与规则 |
 | `sync-backend.sh` | 把 `backend/` 同步进插件包（两处必须一致；改完 backend 记得跑一次） |
 | `backend/deploy.sh` | 部署后端（root）；插件包内也带一份（`plasmoid/contents/backend/`），供插件内"一键修复"使用 |
 | `backend/io.github.helloydh007.hotspot.desktop` | 桌面入口（`plasmawindowed io.github.helloydh007.hotspot`） |
+| `tests/` + `.github/workflows/ci.yml` | 配置库单测 + 控制脚本 mock 端到端测试 + CI（见"开发与测试"）|
 
 ## 安全
 
@@ -185,10 +204,21 @@ pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> [<新密码>]
 - 无敏感信息的状态标记（`disabled`、`fallback`）为 644，供免特权状态查询读取；`/run/kde-hotspot/hostapd.conf`（含密码）保持 600。
 - **凭据不会出现在命令行里**：`set-credentials` 支持 `-`（从 stdin 读）和 `--pass-file FILE`（从 600 文件读后立即删除）；
   面板改密码时就是走 `--pass-file`，避免密码进入 `pkexec` 的 argv 被同机其他用户 `ps` 看到（写临时文件的那一次 shell 命令行仍会短暂可见）。
+  临时目录用 `mktemp -d` 在 `$XDG_RUNTIME_DIR` 下随机命名（不再是可以预测的 `/tmp/固定名`）。
+- `--pass-file` **只接受调用者自己拥有的、私有目录（属主相符且组/他人不可写）里的 600 普通文件**：不能是符号链接、
+  不超过 4 KiB；读完立即删除并尽量删掉临时目录，不合规直接拒绝——避免被诱导去读 `/etc/shadow` 这类任意文件。
+- **组授权三处一致**：polkit 规则授权的组、`/etc/kde-hotspot/config` 的可读组、`deploy.sh` 的组候选列表（`netdev`/`sudo`/`wheel`）
+  由部署脚本统一决定，并把实际用到的组写进 `/var/lib/kde-hotspot/conf.group`，ctl 改配置时沿用它——
+  不会出现"规则授权了 A 组、文件却只给 B 组读"这种"授权了但读不到/读得到却没授权"的错位。
 - **修复命令优先使用 root 拥有的副本** `/usr/local/share/kde-hotspot/deploy.sh`；插件包内那份位于用户可写目录，仅作后备
   （避免"授权后以 root 执行家目录里的脚本"）。
-- **systemd 单元已加固**：`NoNewPrivileges`、`PrivateTmp`、`ProtectSystem=full`、`ProtectHome`、受限的 `CapabilityBoundingSet`（仅网络管理与文件相关能力）；
-  重启预算 120 秒内 5 次，配置错误不会无限重启刷日志。停服务时由 `ExecStopPost` 自动清理频段偏好与 NAT/转发规则。
+- **systemd 单元已加固**：`NoNewPrivileges`、`PrivateTmp`、`ProtectSystem=full`、`ProtectHome`、`ProtectKernel*`、`ProtectClock/Hostname`、
+  `RestrictNamespaces`、`RestrictAddressFamilies`（只留 unix/inet/inet6/netlink/packet）、`SystemCallArchitectures=native` 等；
+  主服务与 normal 单元的 `CapabilityBoundingSet` 只留 `CAP_NET_ADMIN`/`CAP_NET_RAW`（dnsmasq 单元另按它自己声明需要的
+  `CAP_CHOWN`/`CAP_SETUID`/`CAP_SETGID`/`CAP_NET_BIND_SERVICE`/`CAP_NET_RAW` 保留）。`systemd-analyze security` 分数：
+  主服务 **6.8 → 4.4（OK）**，dnsmasq **6.7 → 5.0**。重启预算 120 秒内 5 次，配置错误不会无限重启刷日志。
+  停服务时由 `ExecStopPost` 自动清理频段偏好、NAT/转发规则与策略路由——清理按 `/run/kde-hotspot/rules.state` 里
+  **当时记录下来的**接口/网段来拆，所以之后即使改过 `STA_IF`/`AP_IP` 也不会留下残规则。
 - 后端服务以 root 运行是必需的（hostapd/dnsmasq/iptables 都需要特权）。
 
 ## 卸载
@@ -253,6 +283,45 @@ sudo tcpdump -ni ap0 host 10.233.33.50     # 客户端到底发了什么
 ```
 
 如果客户端流量确实发出去了却收不到回包，问题在更上游（路由器/运营商），与热点无关。
+
+### 手工改了 `/etc/kde-hotspot/config`，好像没生效
+
+配置在**服务启动时读一次**（这样每秒的状态轮询不必反复解析文件）。手工改完执行：
+
+```bash
+sudo systemctl restart kde-hotspot kde-hotspot-dhcp
+```
+
+在面板里改名称/密码不用手动重启：ctl 会自己重启运行中或待命中的服务。
+
+### 面板显示热点在跑，但手机连上后拿不到 IP
+
+先看面板里有没有"DHCP 未运行"的警告——有就是 dnsmasq 没起来，`journalctl -u kde-hotspot-dhcp` 看原因
+（地址池配错、53 端口被别的程序占用等）。dnsmasq 用 `bind-dynamic` 只绑热点接口上，
+与 systemd-resolved 的 `127.0.0.53` 不冲突，不需要停 resolved。
+
+## 开发与测试
+
+```bash
+bash tests/run-all.sh     # 语法 + shellcheck + 单测 + QML 语法；本地与 CI 跑的是同一套
+```
+
+- `tests/test-config.sh`：配置库单测（解析、引号/注释、注入、校验、原子写回，58 项）
+- `tests/test-ctl.sh`：控制脚本**端到端**测试（108+ 项）——把 ctl 里的绝对路径 sed 到临时目录，用 mock 的
+  `iw`/`nmcli`/`systemctl`/`ip`/`iptables` 跑出真实的命令序列，再断言 JSON 结果、状态/配置文件的变化和实际发出的系统调用。
+  不需要 root、不需要网卡、不碰真实网络，所以 CI 里也能跑
+- `.github/workflows/ci.yml`：push/PR 跑上面全部检查；QML 部分用 `qmllint` 做语法检查
+  （CI 里装不齐 Plasma 的 QML 模块，import 相关的警告忽略，只有语法错误才失败）
+
+确认这些断言不是"恒真"的红-绿自检（把同一批断言跑在修复前的实现上）：
+
+```bash
+git show HEAD:backend/kde-hotspot-ctl > /tmp/old-ctl
+CTL_SRC=/tmp/old-ctl bash tests/test-ctl.sh   # 修复前：63 通过 / 45 失败
+```
+
+修复前的实现里，配置里的 `$(command)` 会被执行（测试会看到标记文件被创建）、`SSID=My$$Net` 会被展开成 `My41Net`、
+带控制字符的 `status` 输出不是合法 JSON；修复后这些项全绿。
 
 ## 参考与致谢
 
