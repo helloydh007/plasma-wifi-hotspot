@@ -92,10 +92,14 @@ removes the old polkit action file. No manual steps needed.
 
 Semantics worth knowing (they are symmetric on purpose):
 
-- **Turning it off keeps it off**: `off` stops both mechanisms, disables all three systemd units, restores the
-  Wi-Fi band preference, and writes a "stay off" marker — so a reboot, a NIC replug or an NM reconnect will not
-  silently bring the hotspot back. Turn the **Autostart** switch on again to undo that.
-- **Switching mode** also turns autostart off, so you always choose explicitly what starts at boot.
+- **Turning it off only stops it** (it does *not* touch your Autostart switch — these are two separate settings):
+  `off` stops both mechanisms, restores the Wi-Fi band preference and writes a "stay off" marker that is valid
+  **for the current boot only**. So nothing brings the hotspot back during this session, while a reboot still
+  honours whatever the **Autostart** switch says. If you want it to stay off across reboots too, turn Autostart off.
+- **Autostart** only decides whether the hotspot starts at boot: it enables/disables the systemd units and never
+  starts or stops the running hotspot itself.
+- **Switching mode** stops both mechanisms, writes the new mode and **keeps your autostart setting** (it just
+  points it at the new mode's units).
 - **Credentials are applied immediately**: if the hotspot is running (or the concurrent service is idle but loaded),
   `set-credentials` restarts it so the new name/password take effect right away.
 - **DHCP failures are reported, not hidden**: if the main unit is up but dnsmasq is not, the panel says so

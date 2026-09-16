@@ -270,6 +270,29 @@ hs_derive_ap_net(){
     printf '%s.0/24\n' "${ip%.*}"
 }
 
+# ---------- 运行时标记 ----------
+# hs_boot_epoch：本次开机的时间点（现在 - uptime）。取不到返回 1。
+hs_boot_epoch(){
+    local up now
+    up=$(cut -d. -f1 /proc/uptime 2>/dev/null) || return 1
+    case "$up" in ''|*[!0-9]*) return 1 ;; esac
+    now=$(date +%s 2>/dev/null) || return 1
+    case "$now" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$((now - up))"
+}
+
+# hs_marker_is_current <文件>：标记存在，且是**本次开机之后**写的。
+# 用途：像"保持关闭"这类运行时标记只在本次开机内生效——否则用户同时开了
+# "开机自启"，重启后热点反而起不来（关热点不该动开机自启）。
+# 取不到开机时间时按"有效"处理（保守：宁可先不启动，也不要偷偷起热点）。
+hs_marker_is_current(){
+    local f=${1:-} mt boot
+    [ -n "$f" ] && [ -e "$f" ] || return 1
+    mt=$(stat -c %Y "$f" 2>/dev/null) || return 1
+    boot=$(hs_boot_epoch) || return 0
+    [ "$mt" -ge "$boot" ]
+}
+
 # hs_conf_set <键> <值> [<键> <值> ...]：就地重写（原子替换）
 #   - 其它行原样保留；被改的行保留其行尾注释
 #   - 键不在白名单、值含换行/回车 → 返回 1（不写坏文件）

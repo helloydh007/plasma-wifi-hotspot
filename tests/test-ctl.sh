@@ -400,7 +400,7 @@ run_status
 is "改用 NM 里已连接的 Wi-Fi 设备" "$(jget wifi.iface)" "wlan9"
 is "标记为自动探测" "$(jget sta_if_auto)" "true"
 
-section "E. off = 保持关闭 + 关闭自启 + 三个单元一起 disable"
+section "E. 关闭热点 = 只停当前，绝不动「开机自启」"
 reset
 : > "$STATE/autostart-normal"
 : > "$MOCKSTATE/enabled.kde-hotspot.service"
@@ -412,14 +412,24 @@ printf '6\n' > "$MOCKSTATE/ap.channel"
 rm -f "$MOCKSTATE/sta.channel"
 run off
 is "off 成功" "$(jget ok)" "true"
-is "写了「保持关闭」标记" "$([ -e "$STATE/disabled" ] && echo yes || echo no)" "yes"
-mock_has "systemctl disable kde-hotspot.service kde-hotspot-dhcp.service kde-hotspot-normal.service" \
-    && ok "三个单元一起 disable" || no "三个单元一起 disable" "$(grep disable "$MOCKLOG")"
-is "清掉普通模式自启标记" "$([ -e "$STATE/autostart-normal" ] && echo yes || echo no)" "no"
+is "写了「保持关闭」标记（仅本次开机内有效）" "$([ -e "$STATE/disabled" ] && echo yes || echo no)" "yes"
+is "不再 disable 任何单元（开机自启原样保留）" "$(grep -c 'systemctl disable' "$MOCKLOG" 2>/dev/null || true)" "0"
+is "普通模式自启标记也不动" "$([ -e "$STATE/autostart-normal" ] && echo yes || echo no)" "yes"
 mock_has "systemctl stop kde-hotspot.service kde-hotspot-dhcp.service" \
     && ok "停掉并发模式服务" || no "停掉并发模式服务"
 mock_has "ip link set ap0 down" && ok "把 ap0 放倒" || no "把 ap0 放倒"
-contains "提示里说明自启也关了" "$(jget message)" "自启已关闭"
+not_contains "提示文案不再说自启被关闭" "$(jget message)" "自启已关闭"
+
+section "E2. 普通模式下关闭热点：同样不动开机自启"
+reset
+cfg_set MODE normal
+: > "$STATE/autostart-normal"
+printf 'uuid-ap|kde-hotspot-normal|802-11-wireless|wlan0|yes\n' >> "$MOCKSTATE/nm.conns"
+: > "$MOCKLOG"
+run off
+is "off 成功" "$(jget ok)" "true"
+is "普通模式自启标记保留" "$([ -e "$STATE/autostart-normal" ] && echo yes || echo no)" "yes"
+is "没有 disable normal 单元" "$(grep -c 'disable kde-hotspot-normal' "$MOCKLOG" 2>/dev/null || true)" "0"
 
 section "F. autostart on 只启用当前模式的单元"
 reset
@@ -458,6 +468,20 @@ is "行数不变（没有追加重复键）" "$(wc -l < "$CONF" | tr -d ' ')" "4
 mock_has "systemctl stop kde-hotspot.service kde-hotspot-dhcp.service" && ok "停并发服务" || no "停并发服务"
 mock_has "nmcli connection down kde-hotspot-normal" && ok "停普通模式热点" || no "停普通模式热点"
 mock_has "systemctl disable kde-hotspot.service" && ok "切换模式会关掉自启" || no "切换模式会关掉自启"
+not_contains "提示里不再说自启被关闭" "$(jget message)" "自启已关闭"
+# 自启原本开着 → 切换模式后应指向新模式，而不是被关掉
+: > "$MOCKLOG"
+: > "$MOCKSTATE/enabled.kde-hotspot-normal.service"
+run mode concurrent
+mock_has "systemctl enable kde-hotspot.service kde-hotspot-dhcp.service" \
+    && ok "自启原本开着 → 新模式单元被启用" || no "自启原本开着 → 新模式单元被启用" "$(grep enable "$MOCKLOG")"
+mock_has "systemctl disable kde-hotspot-normal.service" \
+    && ok "旧模式单元被停用" || no "旧模式单元被停用"
+# 自启原本关着 → 切换模式后仍然是关着
+reset
+: > "$MOCKLOG"
+run mode normal
+is "自启原本关着 → 不 enable 任何单元" "$(grep -c 'systemctl enable' "$MOCKLOG" 2>/dev/null || true)" "0"
 run mode bogus
 is "非法模式不输出 JSON" "$(jget ok)" "<no-json>"
 is "非法模式 exit 2" "$RC" "2"
@@ -655,6 +679,19 @@ run cleanup
 mock_has "nmcli connection modify uuid-home 802-11-wireless.band bg" && ok "恢复 Wi-Fi 频段偏好" || no "恢复 Wi-Fi 频段偏好"
 mock_has "nmcli connection up uuid-home" && ok "恢复后重新连上" || no "恢复后重新连上"
 is "备份已清理" "$([ -e "$STATE/band.backup" ] && echo yes || echo no)" "no"
+
+section "L2. 上次开机留下的「保持关闭」标记：不再压制开机自启"
+reset
+: > "$STATE/disabled"
+touch -d '2020-01-01 00:00:00' "$STATE/disabled"
+: > "$MOCKSTATE/active.kde-hotspot.service"
+: > "$MOCKSTATE/active.kde-hotspot-dhcp.service"
+run_status
+is "陈旧标记不算「已关闭」（重启后应听从开机自启）" "$(jget disabled)" "false"
+reset
+: > "$STATE/disabled"
+run_status
+is "本次开机写的标记仍算「已关闭」" "$(jget disabled)" "true"
 
 section "M. 其它：JSON 结果始终是一行、未知命令退出码 2"
 reset

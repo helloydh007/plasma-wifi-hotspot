@@ -317,9 +317,9 @@ autostart_off(){
     rm -f "$STATE/autostart-normal" 2>/dev/null || true
     systemctl disable "$UNIT_MAIN" "$UNIT_DHCP" "$UNIT_NORMAL" >/dev/null 2>&1 || true
 }
-do_autostart(){
-    case "${1:-}" in on|off) ;; *) log "用法: autostart on|off"; return 2 ;; esac
-    if [ "$1" = on ]; then
+# apply_autostart on|off：把"开机自启"落到单元上（只改单元，不启停热点本身）
+apply_autostart(){
+    if [ "${1:-}" = on ]; then
         # 自启=开 意味着"允许开机起热点"，所以要清掉"保持关闭"标记
         rm -f "$DISABLED"
         if [ "$MODE" = normal ]; then
@@ -331,10 +331,18 @@ do_autostart(){
             systemctl disable "$UNIT_NORMAL" >/dev/null 2>&1 || true
             systemctl enable "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
         fi
+    else
+        autostart_off
+    fi
+}
+
+do_autostart(){
+    case "${1:-}" in on|off) ;; *) log "用法: autostart on|off"; return 2 ;; esac
+    apply_autostart "$1"
+    if [ "$1" = on ]; then
         log "已启用开机自启（$MODE 模式）"
         result true "已启用开机自启（$MODE 模式）"
     else
-        autostart_off
         log "已关闭开机自启"
         result true "已关闭开机自启"
     fi
@@ -431,8 +439,10 @@ do_on(){
 # off = 关闭并保持关闭：置 disabled 标记（监督脚本据此不起热点），
 # 同时关掉开机自启——否则普通模式下次开机又会自己打开热点并断开 Wi-Fi（评审 §3.3a）。
 do_off(){
-    local was_auto=no
-    [ "$(autostart_state)" = on ] && was_auto=yes
+    # 「关闭热点」只负责"现在停"：停机制 + 恢复频段 + 写一个**仅本次开机内有效**的
+    # 保持关闭标记（防止这一轮里服务被别的东西拉起来）。
+    # **不碰开机自启**——那是另一个开关，关热点不该偷偷改用户的设置
+    # （2026-09-16 用户反馈："为什么关闭热点后要关闭开机自启？请不要这样设计"）。
     touch_public "$DISABLED"
     case "$MODE" in
       normal)
@@ -444,20 +454,18 @@ do_off(){
         restore_band
         ;;
     esac
-    autostart_off
     clear_runtime_marks
-    log "热点已关闭（保持关闭）；开机自启已关闭"
-    if [ "$was_auto" = yes ]; then
-        result true "热点已关闭并保持关闭；开机自启已关闭（需要的话请重新打开）"
-    else
-        result true "热点已关闭并保持关闭"
-    fi
+    log "已停止热点（本次开机内保持关闭；开机自启设置未改动）"
+    result true "热点已关闭（开机自启设置未改动；重启后是否自动开启由它决定）"
 }
 
 do_mode(){
     local m="${1:-}"
     case "$m" in concurrent|normal) ;; *) log "模式必须是 concurrent 或 normal"; return 2 ;; esac
-    # 切换模式时先停两套、并临时置 disabled 防止服务自己又起来
+    # 切换模式 = 停两套机制 + 改写 MODE。**保留**用户的"开机自启"设置，
+    # 只把自启指向新模式的单元（关热点、切模式都不该偷偷改用户的开关）。
+    local was_auto=no
+    [ "$(autostart_state)" = on ] && was_auto=yes
     touch_public "$DISABLED"
     stop_normal
     stop_concurrent
@@ -468,11 +476,16 @@ do_mode(){
     fi
     fix_conf_perm
     MODE="$m"
-    # 三个单元一起 disable（理由见 autostart_off 注释）
-    autostart_off
-    clear_runtime_marks
-    log "已切换到 $m 模式；两套热点机制都已停止；自启已关闭，需要的话请重新打开"
-    result true "已切换到${m}模式；热点已停止；自启已关闭（需重新打开）"
+    if [ "$was_auto" = yes ]; then
+        apply_autostart on        # 自启原本开着 → 改成指向新模式
+        log "已切换到 $m 模式；两套热点机制都已停止；开机自启保持开启（已指向新模式）"
+        result true "已切换到${m}模式；热点已停止；开机自启保持开启"
+    else
+        autostart_off
+        clear_runtime_marks
+        log "已切换到 $m 模式；两套热点机制都已停止；开机自启保持关闭"
+        result true "已切换到${m}模式；热点已停止；开机自启保持关闭"
+    fi
 }
 
 # ---------- 修改热点名称/密码 ----------
@@ -672,7 +685,10 @@ do_status(){
         fi
     fi
 
-    local disabled=false; [ -e "$DISABLED" ] && disabled=true
+    # 「保持关闭」标记只在本次开机内有效：上次开机留下的陈旧标记不该让面板
+    # 一直显示"已关闭"（否则用户开了开机自启也会以为关了）
+    local disabled=false
+    hs_marker_is_current "$DISABLED" && disabled=true
     local fb=false; [ -e "$STATE/fallback" ] && fb=true
     local iface_present=yes; [ -n "${stype:-}" ] || iface_present=no
     local clients=0

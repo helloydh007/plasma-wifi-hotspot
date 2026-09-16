@@ -233,6 +233,17 @@ EOF
 hs_conf_load
 is "写成空值也当没写（否则会拼出 priority \"\" 这种坏命令）" "8990" "${RULE_PRIO:-}"
 
+echo "== O) 运行时标记的「是否属于本次开机」判定 =="
+# 用途：用户点了"关闭热点"后写的标记，只在**本次开机内**生效。
+# 否则用户同时开着"开机自启"，重启后热点反而起不来（关热点不该动开机自启）。
+M="$TMP/marker"
+: > "$M"
+if hs_marker_is_current "$M"; then ok "刚写的标记 = 本次开机内有效"; else bad "刚写的标记应有效"; fi
+touch -d '2020-01-01 00:00:00' "$M"
+if hs_marker_is_current "$M"; then bad "上次开机写的标记不该继续有效"; else ok "陈旧标记被判为无效"; fi
+if hs_marker_is_current "$TMP/not-exist"; then bad "不存在的标记应无效"; else ok "不存在的标记无效"; fi
+if hs_marker_is_current ""; then bad "空路径应无效"; else ok "空路径无效"; fi
+
 echo
 echo "配置库测试：$T_PASS 通过，$T_FAIL 失败"
 [ "$T_FAIL" -eq 0 ]

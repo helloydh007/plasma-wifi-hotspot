@@ -95,6 +95,13 @@ if [ -z "$COUNTRY" ]; then
 fi
 [ -n "$COUNTRY" ] || log "未取到监管域（可在 config 里显式设 COUNTRY=XX）；hostapd 用驱动当前设置"
 
+# 「保持关闭」标记只在本次开机内有效：上次开机留下的陈旧标记要清掉，
+# 否则用户开了"开机自启"，重启后热点反而起不来（关热点不该动开机自启）。
+if [ -e "$DISABLED" ] && ! hs_marker_is_current "$DISABLED"; then
+    log "发现上次开机留下的「保持关闭」标记（已过期），忽略并清除"
+    rm -f "$DISABLED" 2>/dev/null || true
+fi
+
 # 上一轮异常退出（断电/被 kill）可能留下频段备份与残留规则：
 # 启动时先清理一次，避免 Wi-Fi 被永久钉在 2.4GHz。
 if [ -e "$STATE/band.backup" ]; then
@@ -192,8 +199,8 @@ loggedoff=0
 while :; do
     # ---- 阶段1：等 STA 关联（任意频段，热点跟随其信道；禁用/普通模式时静默等待）----
     while :; do
-        # 手动关闭：不启动热点
-        if [ -e "$DISABLED" ]; then
+        # 手动关闭（仅本次开机内有效）：不启动热点
+        if hs_marker_is_current "$DISABLED"; then
             if [ "$loggedoff" -eq 0 ]; then
                 log "已被手动关闭（$DISABLED 存在），不启动热点"
                 loggedoff=1
@@ -321,7 +328,7 @@ while :; do
         [ $((tick % 5)) -eq 1 ] && ensure_rules
         [ $((tick % 2)) -eq 1 ] && write_clients
         # 手动关闭 → 立即停
-        if [ -e "$DISABLED" ]; then
+        if hs_marker_is_current "$DISABLED"; then
             log "收到关闭指令，停止热点"
             kill "$HP" 2>/dev/null; wait "$HP" 2>/dev/null; HP=0
             ip link set "$AP_IF" down 2>/dev/null

@@ -411,6 +411,18 @@ run_sup 3
 is "示例占位凭据不启动 hostapd" "$(mock_count 'hostapd -i ap0')" "0"
 is "也不写 hostapd.conf" "$([ -e "$RUN/hostapd.conf" ] && echo 有 || echo 无)" "无"
 
+section "G2. 上次开机留下的「保持关闭」标记：忽略并清除，照常发信标"
+# 这条对应"用户开着开机自启 → 重启后热点应该照常起来"：
+# 关热点时写的标记只在本次开机内有效，陈旧标记必须被忽略
+reset
+cfg_base
+: > "$STATE/disabled"
+touch -d '2020-01-01 00:00:00' "$STATE/disabled"
+run_snap 3
+is "陈旧标记被忽略 → 照常发信标" "$(snap ms/ap.channel)" "6"
+is "陈旧标记被清掉" "$([ -e "$STATE/disabled" ] && echo 有 || echo 无)" "无"
+contains "日志说明标记已过期" "$(cat "$WORK/out.txt")" "已过期"
+
 section "H. 运行中收到关闭指令 / 模式切换：停 hostapd 并把 ap0 放倒"
 reset
 cfg_base
@@ -433,7 +445,7 @@ fi
 SUP_PID="$PID"; stop_all
 contains "日志说明收到关闭指令" "$(cat "$WORK/out2.txt")" "收到关闭指令"
 mock_has "ip link set ap0 down" && ok "把 ap0 放倒" || no "把 ap0 放倒"
-is "客户端数标记被清掉" "$(snap state/clients || true)" ""
+is "客户端数标记被清掉" "$([ -e "$STATE/clients" ] && echo 有 || echo 无)" "无"
 
 printf '\n监督脚本测试：%s 通过，%s 失败\n' "$T_PASS" "$T_FAIL"
 [ "$T_FAIL" -eq 0 ]
