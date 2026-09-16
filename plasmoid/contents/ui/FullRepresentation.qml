@@ -97,6 +97,18 @@ QQC2.ScrollView {
             }
         }
 
+        // 5G 被固件拒绝、自动回退 2.4G 时的提示（随系统语言切换）
+        QQC2.Label {
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.smallSpacing
+            Layout.rightMargin: Kirigami.Units.smallSpacing
+            visible: root.fallback
+            wrapMode: Text.WordWrap
+            color: Kirigami.Theme.neutralTextColor
+            font.pointSize: Kirigami.Theme.smallFont.pointSize
+            text: i18n("⚠ 5GHz was refused by the hardware, the hotspot fell back to 2.4GHz. Wi-Fi moved to 2.4G; the band preference is restored when the hotspot is turned off.")
+        }
+
         // ---------- 主开关 ----------
         QQC2.Label {
             Layout.fillWidth: true

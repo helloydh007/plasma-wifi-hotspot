@@ -158,11 +158,15 @@ while :; do
         ip link set "$AP_IF" down 2>/dev/null
         if [ "$CH" -gt 14 ] && [ "${FALLBACK_2G:-yes}" != "no" ]; then
             force_sta_2g
+            # 给面板一个"发生过回退"的标记（status JSON 的 fallback 字段）
+            echo "$CH" > "$STATE/fallback"
         fi
         sleep 3
         continue
     fi
     loggedfail=0
+    # 5G 热点成功发信标：此前"回退到 2.4G"的标记已过时，清除
+    [ "$HW" = a ] && rm -f "$STATE/fallback"
     misses=0
     while kill -0 "$HP" 2>/dev/null; do
         # 手动关闭 → 立即停

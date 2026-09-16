@@ -30,6 +30,8 @@ PlasmoidItem {
     readonly property string hotspotSsid: (st.hotspot && st.hotspot.ssid) ? st.hotspot.ssid : ""
     readonly property string hotspotPass: (st.hotspot && st.hotspot.pass) ? st.hotspot.pass : ""
     property bool showPass: false
+    // 5G 被固件拒绝、已自动回退 2.4G（监督脚本写入的状态标记）
+    readonly property bool fallback: !!(st.hotspot && st.hotspot.fallback === true)
 
     readonly property string stateText: !ready ? i18n("Backend unavailable") : (isOff ? i18nc("The hotspot is switched off", "Off") : (hotRunning ? i18n("Running") : i18nc("Wi-Fi not on 2.4GHz yet, hotspot not beaconing", "Standby")))
     readonly property string bandText: hotRunning
@@ -67,7 +69,8 @@ PlasmoidItem {
     toolTipMainText: i18n("Wi-Fi hotspot: %1", stateText)
     toolTipSubText: hotRunning
         ? (i18n("Hotspot %1 %2 ch%3", hotspotSsid, (hotBand || ""), (hotCh ? String(hotCh) : ""))
-           + (clients > 0 ? "　" + i18np("%1 device", "%1 devices", clients) : ""))
+           + (clients > 0 ? "　" + i18np("%1 device", "%1 devices", clients) : "")
+           + (fallback ? "　" + i18n("(2.4GHz fallback)") : ""))
         : (mode === "normal"
             ? i18n("Normal mode: enabling will disconnect Wi-Fi")
             : (wifiSsid ? i18n("Wi-Fi %1 %2 ch%3", wifiSsid, wifiBand, (wifiCh ? String(wifiCh) : "")) : i18n("Wi-Fi not connected")))

@@ -224,6 +224,17 @@ msgstr "Wi-Fi %1 %2 ch%3"
 msgid "Wi-Fi not connected"
 msgstr "Wi-Fi 未连接"
 
+#: plasmoid/contents/ui/main.qml:70
+msgid "(2.4GHz fallback)"
+msgstr "（已回退 2.4GHz）"
+
+#: plasmoid/contents/ui/FullRepresentation.qml:109
+msgid ""
+"⚠ 5GHz was refused by the hardware, the hotspot fell back to 2.4GHz. Wi-Fi "
+"moved to 2.4G; the band preference is restored when the hotspot is turned "
+"off."
+msgstr "⚠ 固件不支持 5GHz 热点，已自动回退到 2.4GHz。Wi-Fi 已切换至 2.4G，关闭热点后自动恢复原频段。"
+
 #: plasmoid/contents/ui/main.qml:147
 msgid "Done"
 msgstr "已完成"

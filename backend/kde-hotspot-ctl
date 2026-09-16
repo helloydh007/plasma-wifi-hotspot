@@ -162,6 +162,7 @@ do_off(){
         touch "$DISABLED"
         stop_concurrent
         restore_band
+        rm -f "$STATE/fallback"
         log "并发模式热点已关闭（保持关闭，直到重新开启）"
         result true "热点已关闭，并保持关闭（Wi-Fi 频段偏好已恢复）"
         ;;
@@ -183,6 +184,7 @@ do_mode(){
     MODE="$m"
     # 模式切换后自启统一关闭（普通模式自启会在开机时断开 Wi-Fi，必须用户显式开启）
     rm -f "$STATE/autostart-normal"
+    rm -f "$STATE/fallback"
     systemctl disable "$UNIT_NORMAL" >/dev/null 2>&1 || true
     log "已切换到 $m 模式；两套热点机制都已停止，需要时再手动开启；自启已关闭，需要的话请重新打开"
     result true "已切换到${m}模式；热点已停止；自启已关闭（需重新打开）"
@@ -290,6 +292,7 @@ do_status(){
     fi
 
     local disabled=false; [ -e "$DISABLED" ] && disabled=true
+    local fb=false; [ -e "$STATE/fallback" ] && fb=true
     local clients=0
     if [ -r /var/lib/misc/dnsmasq.leases ]; then
         clients=$(grep -c . /var/lib/misc/dnsmasq.leases 2>/dev/null || true)
@@ -302,8 +305,8 @@ do_status(){
     printf '  "autostart": "%s",\n' "$(autostart_state)"
     printf '  "wifi": {"iface": "%s", "type": "%s", "connected": "%s", "ssid": "%s", "channel": "%s", "freq": "%s", "band": "%s"},\n' \
         "$STA_IF" "$(jstr "${it:-}")" "$conn" "$(jstr "${ssid:-}")" "${ch:-}" "${freq:-}" "${band:-}"
-    printf '  "hotspot": {"running": "%s", "mechanism": "%s", "ssid": "%s", "pass": "%s", "channel": "%s", "band": "%s", "gateway": "%s", "clients": %s},\n' \
-        "$hot" "$mech" "$(jstr "$SSID")" "$(jstr "$PASS")" "${hch:-}" "${hband:-}" "${gw:-}" "$clients"
+    printf '  "hotspot": {"running": "%s", "mechanism": "%s", "ssid": "%s", "pass": "%s", "channel": "%s", "band": "%s", "gateway": "%s", "clients": %s, "fallback": %s},\n' \
+        "$hot" "$mech" "$(jstr "$SSID")" "$(jstr "$PASS")" "${hch:-}" "${hband:-}" "${gw:-}" "$clients" "$fb"
     printf '  "concurrent_service_active": "%s",\n' "$(concurrent_running)"
     printf '  "normal_service_active": "%s"\n' "$(normal_running)"
     printf '}\n'
