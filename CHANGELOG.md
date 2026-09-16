@@ -57,6 +57,8 @@
 - **客户端数不再数租约文件**：改为读 hostapd 的 station dump（监督脚本每约 6 秒写 `$STATE/clients`），
   普通模式退回 `ARP`（只数 `Flags=0x2` 的表项），不再依赖发行版各异的
   `/var/lib/misc/dnsmasq.leases`。
+- **`STA_IF` 自动探测更可靠**：改为优先取 NetworkManager 里**已连接的 Wi-Fi 设备**（其次才看 `iw dev` 的接口列表），
+  并校验接口类型；旧实现取"第一个非 ap0 的接口"，可能选中插着但没用的无线口或非 Wi-Fi 设备。
 - **`deploy.sh` 写配置不再有 644 窗口**：以前先 `install -m 644` 再 `chmod 640`，中间瞬间任何人都能读到密码；
   现在直接 `install -m 640`，并在非 root 场景保留原权限。
 - **`CompactRepresentation` 的标签逻辑不可达**：`Plasmoid.formFactor` 在面板里是 `Horizontal`/`Vertical`，
@@ -65,6 +67,10 @@
 
 ### 改进
 
+- **5GHz 回退判定更准**：把 hostapd 的失败分成"明确拒绝该信道"（`Hardware does not support configured channel`、
+  `Could not select hw_mode`、`Failed to set beacon parameters`、`Interface initialization failed`、`Channel is disabled`）
+  与"其它退出"两类，前者才触发 2.4G 回退；另外识别 DFS/CAC（`DFS`/`radar`/`CAC`）并把等待期限从 15 秒放宽到 150 秒，
+  避免把"正在等雷达检测"误判成失败。
 - 依赖自检增加配置文件库 `/usr/local/lib/kde-hotspot/config.sh`（缺失时会明确报出来）。
 - 监督脚本启动时读一次配置（文档已注明"改完要重启服务"），循环里不再反复解析文件；
   状态轮询仍为免特权只读路径。
@@ -96,6 +102,70 @@
 - **"`install.sh` 总是重启 plasmashell"**：早已按内容哈希判断，未变化时不重启。
 - **"关闭热点会丢频段备份"**：已有 `$STATE/band.backup` + 陷阱 + `ExecStopPost` 三重保障，且清理时按记录拆规则。
 - **IPv6/前缀委派、把后端重构成 D-Bus 常驻服务**：超出本次评审范围，且与"稳定可用"的现状相比收益不明，暂不做。
+- **"配置文件 640 给 netdev 组可读 = 明文密码泄露"（Qwen 2.1）**：不视为降级。可读该文件的组与 polkit 规则授权的组是同一批人，
+  而 `status` 本来就把密码（和 SSID）交给这批人；反过来，若为了不给组读而让面板每 5 秒走一次 `pkexec` 取密码，
+  等于每次轮询 fork 一个 root 进程并建立 polkit 会话——那才是真的更危险。可读范围已被收窄到 `root:<选定的那个组> 640`。
+- **"更新时改为优先执行 root 拥有的 `deploy.sh` 副本"（DeepSeek 3.6-9）**：不采纳。更新流程的意义正是让**仓库里那份**
+  新 `deploy.sh` 去装新后端；优先跑已安装的旧副本会让后端永远无法更新。至于"以 root 执行用户可写目录里的脚本"，
+  这一步是用户自己执行 `bash install.sh` 并确认授权框的结果，与 `sudo make install` 同类；真要防的是"用户没同意就被执行"，
+  而那已经由 polkit 的 `exec.path` 与"一键修复优先用 root 副本"覆盖。首次安装不可能避免，报告本身也承认这点。
+- **"状态轮询改成自适应/事件驱动"（DeepSeek 3.6-11、GPT P1-7）**：暂不做。轮询已经从"每秒 fork root"降到
+  "每 5 秒一次免特权只读查询"（约 -95%）；再拉长间隔会让托盘图标/悬浮提示在命令行开关后长时间显示旧状态，
+  而"面板显示的状态必须可信"是本项目更看重的性质。要彻底解决得换成常驻 D-Bus 服务，属于上一条的架构改动。
+- **`ProtectSystem=strict` + `ReadWritePaths`（DeepSeek 3.7）**：暂不做。当前主服务/普通模式单元是 `full`（`/usr`、`/etc` 已只读），
+  改成 `strict` 需要准确列出运行时写入路径（`/run/kde-hotspot`、`/var/lib/kde-hotspot`），
+  写错会让热点**在真机上直接起不来**，而这里没有网卡可验证——没有验证手段的加固不进主干。
+- **给 `status` 的密码加 `STATUS_SHOW_PASS` 开关（DeepSeek 3.7）**：暂不做，保持"删掉 `do_status` 里的 `pass` 字段"
+  的文档方案；多一个开关就多一条以后会被误配的路径。
+- **面板内二维码/客户端列表/日志入口等体验建议（DeepSeek 3.7）**：属新功能，不在本次修复范围。
+- **bash 后端复杂度（GPT P2-5）**：本次已经把配置读写抽成独立库（`kde-hotspot-config.sh`）并加上单测与端到端测试，
+  这是往"可维护"走的第一步；继续拆分需要真实硬件回归，暂缓。
+
+### 逐条对照（便于复查）
+
+| 报告条目 | 处理 |
+|---|---|
+| DeepSeek 3.1 配置注入/RCE＋字符损坏 | 已修（新增配置库，纯数据解析）|
+| DeepSeek 3.2 「开启中」取消按钮无效 | 已修（`awaitingHotspot` 时点击即发 `off`）|
+| DeepSeek 3.3 模式/自启/保持关闭语义 | 已修（三者对称）|
+| DeepSeek 3.4 status JSON 转义不全 | 已修（`\b\f` + 控制字符 → `\u00xx`）|
+| DeepSeek 3.5 组授权与 polkit 不一致 | 已修（三处统一 + `conf.group`）|
+| DeepSeek 3.6-1 待命态改凭据不生效 | 已修（`concurrent_running` 即重启）|
+| DeepSeek 3.6-2 普通模式旧 profile 残留 | 已修（比对 SSID/PSK，不一致重建）|
+| DeepSeek 3.6-3 /tmp 密码文件路径可预测 | 已修（`mktemp -d` + `umask 077` + 读取端校验属主/权限）|
+| DeepSeek 3.6-4 清理规则依赖当前探测 | 已修（`rules.state` 记录实际使用值）|
+| DeepSeek 3.6-5 硬编码 /24 与 AP_NET 矛盾 | 已修（由 AP_IP 派生 + 不一致告警）|
+| DeepSeek 3.6-6 普通模式客户端数恒为 0 | 已修（hostapd 快照 / ARP）|
+| DeepSeek 3.6-7 DHCP 失败静默 | 已修（`do_on` 检查 DHCP 单元 + `dhcp_active` + 面板警告）|
+| DeepSeek 3.6-8 配置文件 644 窗口 | 已修（`install -m 640`）|
+| DeepSeek 3.6-9 install.sh 以 root 跑仓库脚本 | 不采纳（见上）|
+| DeepSeek 3.6-10 面板标签显示条件 | 已修（按 `formFactor===Vertical` + 托盘方形提示判定）|
+| DeepSeek 3.6-11 轮询成本 | 已改善（1s→5s 且免特权），自适应暂不做（见上）|
+| DeepSeek 3.6-12 高级配置需手动重启 | 已写入 README/config.example |
+| DeepSeek 3.6-13 无 CI/测试/tag/CHANGELOG | 已补（CI、两套测试、本文件、v1.1.0 tag）|
+| GPT P0-1~P0-4 | 全部已修（配置不 source、pass-file、临时文件、capabilities）|
+| GPT P1-1 AP_IP/AP_NET/DHCP 不一致 | 已修 |
+| GPT P1-2 租约数≠在线客户端 | 已修 |
+| GPT P1-3 普通模式只存连接名 | 已修（存 UUID）|
+| GPT P1-4 关闭时可能恢复错误 Wi-Fi | 已修（用户已连别的 Wi-Fi 就不抢）|
+| GPT P1-5 5G 回退依赖日志启发式 | 已改善（分类判定 + DFS/CAC 期限）|
+| GPT P1-6 监管域默认 CN | 已修（不再硬编）|
+| GPT P1-7 3 秒轮询 + 两次 miss | 保留（跟随信道所必需，见上）|
+| GPT P2-1 两份后端源码 | 保留 + `--check` 与 CI 拦住不一致 |
+| GPT P2-2 QML 通过字符串调 pkexec | 保留（D-Bus 重构超出范围）|
+| GPT P2-3 默认重启 plasmashell | 早已按内容哈希判断 |
+| GPT P2-4 缺自动化测试 | 已补 |
+| GPT P2-5 bash 复杂度 | 已抽出配置库并加测试，继续拆分暂缓 |
+| Qwen 2.1 配置文件权限 | 说明（见上）|
+| Qwen 2.2 polkit 范围 | 已收窄到单脚本 + 组统一 |
+| Qwen 3.1 53 端口冲突 | 不成立（`bind-dynamic` 只绑 ap0）|
+| Qwen 3.2 网卡自动探测 | 已修（优先 NM 已连接设备）|
+| Qwen 3.3 NM 连接被永久修改 | 已修（频段/连接 UUID 备份并恢复）|
+| Qwen 3.4 双份后端 | 同 GPT P2-1 |
+| Qwen 4.1 硬编码 dnsmasq.leases | 已修 |
+| Qwen 4.2 配置修改方式不一致 | 已修（唯一写入口 `hs_conf_set`）|
+| Qwen 4.3 缺 IPv6 | 不做（超出范围）|
+| Qwen 4.4 规则残留 | 已修（按记录拆）|
 
 ## 1.0.0
 
