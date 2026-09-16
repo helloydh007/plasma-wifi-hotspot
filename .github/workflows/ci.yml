@@ -37,27 +37,15 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y qt6-declarative-dev-tools
 
-      - name: QML 语法检查
+      - name: QML 语法检查（版本无关；含"这道门是活的"自检）
         run: |
-          # Ubuntu 的 qt6-declarative-dev-tools 把 qmllint 放在 /usr/lib/qt6/bin（不在 PATH 里）。
-          # 旧版 CI 因此每次都 "qmllint: command not found" 却打印 "QML 语法 OK" —— 一道空门。
+          # Ubuntu 的 qt6-declarative-dev-tools 把 qmllint 放在 /usr/lib/qt6/bin（不在 PATH 里），
+          # 而且 24.04 上是 Qt 6.4：没有 --bare，且会因 import 噪音返回非零。
+          # 这些差异统一由 tests/check-qml.sh 处理（本地与 CI 同一份实现）。
           export PATH="$PATH:/usr/lib/qt6/bin"
           if ! command -v qmllint >/dev/null 2>&1; then
-            echo "::error::CI 里找不到 qmllint：请不要静默跳过，要么修环境，要么删掉这一步"
+            echo "::error::CI 里找不到 qmllint：不要静默跳过，请修环境"
             exit 1
           fi
-          qmllint --version
-          # 只看语法（CI 没有 Plasma 的 QML 模块，import 解析不了会有大量噪音警告）。
-          # 用退出码判断，不 grep 文案（文案会变）。
-          if ! qmllint --bare plasmoid/contents/ui/*.qml; then
-            echo "::error::QML 有语法错误"
-            exit 1
-          fi
-          # 自检：故意写坏的文件必须被判失败，证明这道门是活的
-          bad=$(mktemp --suffix=.qml)
-          cat plasmoid/contents/ui/main.qml > "$bad"; printf '\nItem { property int x: }\n' >> "$bad"
-          if qmllint --bare "$bad" >/dev/null 2>&1; then
-            echo "::error::QML 自检失败：写坏的文件竟然通过了"
-            exit 1
-          fi
-          echo "QML 语法 OK（import 相关警告已忽略；自检通过）"
+          qmllint --version || true
+          bash tests/check-qml.sh
