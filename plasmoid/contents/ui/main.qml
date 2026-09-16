@@ -19,6 +19,9 @@ PlasmoidItem {
     property bool awaitingHotspot: false
     property string lastAction: ""
     readonly property int upTimeoutSec: 90
+    // 改密码用的临时文件（0600，ctl 读完即删）
+    property string pendingSsid: ""
+    property string pendingPassFile: ""
 
     // ---------- 派生状态 ----------
     readonly property bool ready: typeof st.mode === "string"
@@ -62,7 +65,20 @@ PlasmoidItem {
         }
         return false
     }
-    readonly property string backendDir: Qt.resolvedUrl("../backend/deploy.sh").toString().replace("file://", "")
+    // 配置是否可读 / 无线接口是否存在：不可读时 status 里的 mode/SSID/密码都是
+    // 默认值或空值，面板必须据此提示，而不是把默认值当成真实状态
+    readonly property bool configReadable: st.config_readable !== false
+    readonly property bool ifacePresent: !(st.wifi && st.wifi.present === "no")
+    // 修复用的后端脚本：优先用 root 拥有的副本（deploy.sh 会安装到该位置），
+    // 插件包内那份在用户可写目录，只作后备——避免"授权后以 root 执行家目录脚本"
+    readonly property string pkgBackendDir: Qt.resolvedUrl("../backend/deploy.sh").toString().replace("file://", "")
+    readonly property bool hasRootBackend: {
+        for (var i = 0; i < deps.length; i++) {
+            if (deps[i].path === "/usr/local/share/kde-hotspot/deploy.sh") { return true }
+        }
+        return false
+    }
+    readonly property string backendDir: hasRootBackend ? "/usr/local/share/kde-hotspot/deploy.sh" : pkgBackendDir
 
     // 图标统一用热点图标；关闭/后端不可用时在右下角叠红色 ✕ 徽标
     // （不用 network-wireless-disconnected——那是"WiFi+叉"，容易和断网混淆）
@@ -98,7 +114,8 @@ PlasmoidItem {
         "/etc/systemd/system/kde-hotspot.service",
         "/etc/systemd/system/kde-hotspot-dhcp.service",
         "/usr/share/polkit-1/actions/org.kde.hotspotctl.policy",
-        "/etc/NetworkManager/conf.d/99-kde-hotspot-ap0.conf"
+        "/etc/NetworkManager/conf.d/99-kde-hotspot-ap0.conf",
+        "/usr/local/share/kde-hotspot/deploy.sh"
     ]
     readonly property string depsCmd: "sh -c 'for p in " + depsPaths.join(" ")
         + "; do if [ -e $p ]; then echo OK $p; else echo MISS $p; fi; done; "
@@ -182,11 +199,21 @@ PlasmoidItem {
                     || (ok ? i18n("Done") : i18n("see journalctl -u kde-hotspot"))
             }
             root.message = ok ? msg : i18n("Failed: %1", msg)
+            // 失败时兜底删除临时密码文件（成功时 ctl 已经删掉了）
+            if (!ok && root.lastAction.indexOf("set-credentials") === 0 && root.pendingPassFile.length > 0) {
+                cleanupSource.connectSource("rm -f " + root.pendingPassFile)
+                root.pendingPassFile = ""
+            }
             // 后端已受理"开启"：热点真正发信标前一直保持"开启中"
             if (ok && root.lastAction === "on") {
                 root.awaitingHotspot = true
                 root.message = i18n("Turn-on accepted — waiting for the hotspot to beacon…")
                 upTimer.restart()
+            }
+            // 关闭指令结束"开启中"状态（用户在等待期间点了取消）
+            if (ok && root.lastAction === "off" && root.awaitingHotspot) {
+                upTimer.stop()
+                root.awaitingHotspot = false
             }
             Qt.callLater(() => { actionSource.disconnectSource(sourceName) })
             root.refreshStatus()
@@ -209,6 +236,33 @@ PlasmoidItem {
         }
     }
 
+    // 写临时密码文件 → 成功后用 --pass-file 调 ctl（argv 里没有密码）
+    P5Support.DataSource {
+        id: prepSource
+        engine: "executable"
+        connectedSources: []
+        onNewData: (sourceName, data) => {
+            Qt.callLater(() => { prepSource.disconnectSource(sourceName) })
+            if (!(data.exitCode === 0 || data.exitCode === "0")) {
+                root.busy = false
+                root.message = i18n("Failed: %1", i18n("could not stage the password file"))
+                return
+            }
+            root.busy = false
+            root.runCtl("set-credentials " + root.shq(root.pendingSsid) + " --pass-file " + root.pendingPassFile)
+        }
+    }
+
+    // 兜底清理临时密码文件（ctl 正常时会自己删掉）
+    P5Support.DataSource {
+        id: cleanupSource
+        engine: "executable"
+        connectedSources: []
+        onNewData: (sourceName, data) => {
+            Qt.callLater(() => { cleanupSource.disconnectSource(sourceName) })
+        }
+    }
+
     Component.onCompleted: refreshDeps()
 
     // ---------- 操作 ----------
@@ -221,7 +275,9 @@ PlasmoidItem {
         depsSource.connectSource(root.depsCmd + " #d" + root.oneShotSeq)
     }
     function runCtl(args) {
-        if (root.busy || root.awaitingHotspot) { return }
+        if (root.busy) { return }
+        // "开启中"期间只放行"关闭"——否则用户要等满 90 秒超时才能取消
+        if (root.awaitingHotspot && args !== "off") { return }
         root.busy = true
         root.lastAction = args
         root.message = i18n("Running: %1", args)
@@ -243,7 +299,42 @@ PlasmoidItem {
             root.message = i18n("Failed: %1", i18n("Password must be 8-63 characters"))
             return
         }
-        runCtl("set-credentials " + shq(ssid) + " " + shq(pass ? pass : ""))
+        if (pass && pass.length > 0) {
+            // 新密码先落到 0600 临时文件（base64 传输，避免引号/转义问题），
+            // 再让 ctl 用 --pass-file 读取并立即删除——这样密码不会出现在
+            // pkexec 的 argv 里（同机其他用户 ps 看不到）
+            root.busy = true
+            root.pendingSsid = ssid
+            root.pendingPassFile = "/tmp/kde-hotspot-pass-" + Date.now() + ".tmp"
+            root.message = i18n("Running: %1", "set-credentials")
+            prepSource.connectSource("sh -c 'umask 077; printf %s " + b64utf8(pass)
+                + " | base64 -d > " + root.pendingPassFile + "'")
+        } else {
+            runCtl("set-credentials " + shq(ssid) + " " + shq(""))
+        }
+    }
+
+    // UTF-8 → base64（Qt.btoa 只接受 Latin-1，这里手动做 UTF-8 编码）
+    function b64utf8(str) {
+        var bytes = []
+        for (var i = 0; i < str.length; i++) {
+            var c = str.charCodeAt(i)
+            if (c < 0x80) {
+                bytes.push(c)
+            } else if (c < 0x800) {
+                bytes.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f))
+            } else if (c >= 0xd800 && c < 0xdc00) {
+                var c2 = str.charCodeAt(++i)
+                var cp = 0x10000 + ((c - 0xd800) << 10) + (c2 - 0xdc00)
+                bytes.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f),
+                           0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f))
+            } else {
+                bytes.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f))
+            }
+        }
+        var bin = ""
+        for (var j = 0; j < bytes.length; j++) { bin += String.fromCharCode(bytes[j]) }
+        return Qt.btoa(bin)
     }
 
     compactRepresentation: CompactRepresentation {}

@@ -25,18 +25,33 @@ ls -l /usr/local/sbin/kde-hotspot-ctl /usr/local/sbin/kde-hotspot.sh \
       /etc/polkit-1/rules.d/49-kde-hotspot.rules \
       /etc/systemd/system/kde-hotspot*.service | awk '{print "  "$1" "$3":"$4" "$NF}'
 
+echo "== 2b) 安装 root 拥有的后端副本（供插件内“一键修复”使用）=="
+# 插件包里的 backend/ 位于用户可写目录，直接 pkexec 执行它并不干净；
+# 这里放一份 root 拥有的副本，插件的修复命令优先用它。
+install -d -m 755 /usr/local/share/kde-hotspot
+install -m 755 "$SRC/kde-hotspot-ctl" "$SRC/kde-hotspot.sh" "$SRC/deploy.sh" /usr/local/share/kde-hotspot/
+install -m 644 "$SRC"/*.service "$SRC"/*.policy "$SRC"/*.rules "$SRC"/*.desktop \
+               "$SRC"/config.example /usr/local/share/kde-hotspot/ 2>/dev/null || true
+ls -ld /usr/local/share/kde-hotspot | awk '{print "  "$1" "$3":"$4" "$NF}'
+
 echo "== 3) 重载 systemd 与 polkit =="
 systemctl daemon-reload
 # polkit 会自动监测 rules.d 变化（inotify），无需重启服务；这里只做提示
 echo "  systemd 已重载（polkit 规则会自动生效）"
 
-echo "== 4) 配置文件（缺失时用示例生成；SSID/PASS 需自行修改）=="
+echo "== 4) 配置文件（缺失时生成随机凭据）=="
 install -d -m 755 /etc/kde-hotspot
 if [ ! -e /etc/kde-hotspot/config ]; then
-    install -m 644 "$SRC/config.example" /etc/kde-hotspot/config
-    echo "  已生成 /etc/kde-hotspot/config（占位值，请修改 SSID/PASS）"
+    # 从示例生成，并**填入随机 SSID/密码**——绝不能让用户用示例里公开已知的
+    # 占位密码起热点（旧版直接装占位值，与"不会用默认密码"的承诺矛盾）。
+    GEN_SSID="kde-hotspot-$(tr -dc '0-9' < /dev/urandom | head -c 4)"
+    GEN_PASS="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 14)"
+    sed -e "s|^SSID=.*|SSID=$GEN_SSID|" -e "s|^PASS=.*|PASS=$GEN_PASS|" \
+        "$SRC/config.example" > /etc/kde-hotspot/config
+    chmod 644 /etc/kde-hotspot/config
+    GEN_CREDS=1
+    echo "  已生成 /etc/kde-hotspot/config 并填入随机凭据（见下方打印，只显示这一次）"
 fi
-install -m 644 "$SRC/dnsmasq.conf" /etc/kde-hotspot/dnsmasq.conf
 # 配置里有热点密码：root 属主 + 640，读取权限授予网络管理组。
 # 目的：插件的 status 只是只读查询，不该每次都 pkexec（fork root + 建 polkit 会话）；
 # 授予该组后插件即可免特权读到 SSID/密码/MODE。该用户集合与 polkit 规则
@@ -72,10 +87,28 @@ install -m 644 "$SRC/99-kde-hotspot-ap0.conf" /etc/NetworkManager/conf.d/99-kde-
 nmcli general reload 2>/dev/null || true
 echo "  已安装 /etc/NetworkManager/conf.d/99-kde-hotspot-ap0.conf"
 
+echo "== 4d) 按 config 生成 dnsmasq.conf（DHCP/DNS 与 config 保持一致）=="
+# 旧版把 interface/dhcp-range/网关写死在 dnsmasq.conf 里：用户一改 AP_IF/AP_IP，
+# dnsmasq 就静默不服务或发错网关。现在由 ctl 依据 config 渲染。
+/usr/local/sbin/kde-hotspot-ctl sync-helpers 2>&1 | sed 's/^/  /' || true
+ls -l /etc/kde-hotspot/dnsmasq.conf 2>/dev/null | awk '{print "  "$1" "$3":"$4" "$NF}'
+
 echo "== 5) 让并发模式服务读到新脚本 =="
 systemctl restart kde-hotspot.service kde-hotspot-dhcp.service 2>/dev/null || true
 systemctl is-active kde-hotspot.service kde-hotspot-dhcp.service | tr '\n' ' '; echo
 
 echo "== 6) 状态 =="
 /usr/local/sbin/kde-hotspot-ctl status
+
+if [ "${GEN_CREDS:-0}" = "1" ]; then
+    cat <<EOF
+
+==================== 热点凭据（只显示这一次，请自行记录）====================
+  名称 SSID: $(grep '^SSID=' /etc/kde-hotspot/config | cut -d= -f2-)
+  密码 PASS: $(grep '^PASS=' /etc/kde-hotspot/config | cut -d= -f2-)
+  存放位置 : /etc/kde-hotspot/config（root:${CONF_GROUP:-root} 640）
+  面板里也能看到/修改；忘记时用 root 查看该文件即可。
+=============================================================================
+EOF
+fi
 echo "部署完成"

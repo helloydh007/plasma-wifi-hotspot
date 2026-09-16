@@ -8,5 +8,5 @@ Exec=plasmawindowed org.kde.hotspot
 Icon=network-wireless-hotspot
 Terminal=false
 Categories=Network;
-Keywords=hotspot;wifi;hotspot;热点;AP;无线;
+Keywords=hotspot;wifi;access point;热点;AP;无线;
 StartupNotify=true

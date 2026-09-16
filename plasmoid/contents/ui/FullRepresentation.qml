@@ -104,6 +104,30 @@ QQC2.ScrollView {
             }
         }
 
+        // 配置读不到（用户不在授权组）时，状态里的模式/名称/密码都是默认值或空值
+        QQC2.Label {
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.smallSpacing
+            Layout.rightMargin: Kirigami.Units.smallSpacing
+            visible: !root.configReadable
+            wrapMode: Text.WordWrap
+            color: Kirigami.Theme.negativeTextColor
+            font.pointSize: Kirigami.Theme.smallFont.pointSize
+            text: i18n("⚠ The config is not readable by your user, so the mode/name/password shown here are defaults. Re-run install.sh (or add your user to the network group) to fix.")
+        }
+
+        // 无线接口不存在：多半是配置里的 STA_IF 写错了
+        QQC2.Label {
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.smallSpacing
+            Layout.rightMargin: Kirigami.Units.smallSpacing
+            visible: !root.ifacePresent
+            wrapMode: Text.WordWrap
+            color: Kirigami.Theme.negativeTextColor
+            font.pointSize: Kirigami.Theme.smallFont.pointSize
+            text: i18n("⚠ Wireless interface %1 not found — check STA_IF in /etc/kde-hotspot/config (the hotspot would just sit in standby).", root.st.wifi ? root.st.wifi.iface : "")
+        }
+
         // 5G 被固件拒绝、自动回退 2.4G 时的提示（随系统语言切换）
         QQC2.Label {
             Layout.fillWidth: true
@@ -131,10 +155,12 @@ QQC2.ScrollView {
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.smallSpacing
             Layout.rightMargin: Kirigami.Units.smallSpacing
-            // "开启中"期间按钮保持禁用/变暗，直到热点真正发出信标
-            enabled: !root.busy && !root.awaitingHotspot && root.ready
-            text: (root.busy || root.awaitingHotspot)
-                ? (root.awaitingHotspot || root.lastAction === "on" ? i18n("Starting hotspot…") : i18n("Running…"))
+            // "开启中"期间显示进度并保持可点（点了就是取消/关闭），
+            // 不必等满 90 秒超时；其它控件此时禁用，避免与启动中的热点冲突
+            enabled: !root.busy && (root.awaitingHotspot || root.ready)
+            text: root.busy
+                ? (root.lastAction === "on" ? i18n("Starting hotspot…") : i18n("Running…"))
+                : root.awaitingHotspot ? i18n("Starting hotspot… (click to cancel)")
                 : ((root.isOff || !root.hotRunning) ? i18n("Turn on hotspot") : i18n("Turn off hotspot"))
             icon.name: (root.isOff || !root.hotRunning) ? "network-wireless-hotspot" : "dialog-cancel"
             onClicked: root.toggleHotspot()

@@ -6,11 +6,11 @@
   <kcfgfile name=""/>
   <group name="General">
     <entry name="showLabel" type="Bool">
-      <label>在托盘图标旁显示频段/信道</label>
+      <label>Show band/channel next to the tray icon</label>
       <default>true</default>
     </entry>
     <entry name="pollInterval" type="Int">
-      <label>状态刷新间隔（秒）</label>
+      <label>Status refresh interval (seconds)</label>
       <default>5</default>
       <min>2</min>
       <max>60</max>

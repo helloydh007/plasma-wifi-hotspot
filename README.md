@@ -85,19 +85,21 @@ git clone <此仓库> && cd plasma-wifi-hotspot
 bash install.sh
 ```
 
-`install.sh` 一次做完四件事：
+`install.sh` 一共五步：
 
-1. **部署后端**（pkexec，会弹一次授权框）：控制脚本、systemd 单元、polkit 动作与规则、NM 的 `ap0` unmanaged 配置
-2. 安装 **Plasma 插件**（用户级 `~/.local/share/plasma/plasmoids/`，不需要 root）
-3. 安装**桌面入口**（应用菜单/KRunner 可搜"Wi-Fi 热点控制"）
-4. **刷新界面**：插件内容变化时才重启 plasmashell（见下"更新"一节）
+1. **部署后端**（pkexec，弹一次授权框）：控制脚本、systemd 单元、polkit 动作与规则、NM 的 `ap0` unmanaged 配置，以及**按 config 渲染的 `dnsmasq.conf`**
+2. 安装 **root 拥有的后端副本**到 `/usr/local/share/kde-hotspot/`（供插件内"一键修复"使用——不再以 root 执行用户可写目录里的脚本）
+3. 安装 **Plasma 插件**（用户级 `~/.local/share/plasma/plasmoids/`，不需要 root）
+4. 安装**桌面入口**（应用菜单/KRunner 可搜"Wi-Fi 热点控制"）
+5. **刷新界面**：插件内容变化时才重启 plasmashell（见下"更新"一节）
 
-装完两步收尾：
+**首次安装会自动生成随机热点名称与密码**（形如 `kde-hotspot-4821` / 14 位随机串）并在部署结束时打印一次，
+装完即可用。想改就在面板里改，或编辑 `/etc/kde-hotspot/config`。
+配置文件里 SSID/PASS 为空、或仍是示例占位值（`my-hotspot`、`change-me-*` 等）时，后端**拒绝启动热点**——
+不会用公开已知的密码起热点。`config.example` 里还列了 `FALLBACK_2G`、`COUNTRY`、`NORMAL_CHANNEL`、`DHCP_*` 等可选项。
 
-1. 编辑 `/etc/kde-hotspot/config`（权限 600），把 `SSID` / `PASS` 改成你自己的。
-   **未设置时后端拒绝启动热点**，不会用默认密码起热点。
-2. 把插件放进托盘：右键面板 → 系统托盘设置 → 条目 → 勾选"Wi-Fi 热点控制"；
-   或者直接拖到面板上（放在面板上会额外显示频段/信道文字，托盘里只显示图标）。
+装完收尾一步：把插件放进托盘：右键面板 → 系统托盘设置 → 条目 → 勾选"Wi-Fi 热点控制"；
+或者直接拖到面板上（放在面板上会额外显示频段/信道文字，托盘里只显示图标）。
 
 ## 更新
 
@@ -176,6 +178,12 @@ pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> [<新密码>]
 - 热点密码保存在 `/etc/kde-hotspot/config`（`root:netdev 640`，仅 root 与网络管理组可读）。这个用户集合与 polkit 规则授权的集合（sudo/netdev 组免密执行 ctl）一致，因此不降低安全等级；它让插件免特权读到 SSID/密码/MODE。脚本不内置任何默认密码，配置缺失时拒绝启动。
   `status` 的 JSON 里包含当前热点名称与密码（面板"当前密码"行默认打码，点眼睛图标显示）——多人共用的机器上如不接受，删掉 `do_status` 里的 `pass` 字段即可。
 - 无敏感信息的状态标记（`disabled`、`fallback`）为 644，供免特权状态查询读取；`/run/kde-hotspot/hostapd.conf`（含密码）保持 600。
+- **凭据不会出现在命令行里**：`set-credentials` 支持 `-`（从 stdin 读）和 `--pass-file FILE`（从 600 文件读后立即删除）；
+  面板改密码时就是走 `--pass-file`，避免密码进入 `pkexec` 的 argv 被同机其他用户 `ps` 看到（写临时文件的那一次 shell 命令行仍会短暂可见）。
+- **修复命令优先使用 root 拥有的副本** `/usr/local/share/kde-hotspot/deploy.sh`；插件包内那份位于用户可写目录，仅作后备
+  （避免"授权后以 root 执行家目录里的脚本"）。
+- **systemd 单元已加固**：`NoNewPrivileges`、`PrivateTmp`、`ProtectSystem=full`、`ProtectHome`、受限的 `CapabilityBoundingSet`（仅网络管理与文件相关能力）；
+  重启预算 120 秒内 5 次，配置错误不会无限重启刷日志。停服务时由 `ExecStopPost` 自动清理频段偏好与 NAT/转发规则。
 - 后端服务以 root 运行是必需的（hostapd/dnsmasq/iptables 都需要特权）。
 
 ## 卸载
@@ -183,8 +191,10 @@ pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> [<新密码>]
 > 建议：如果热点正开着，先在插件里点一次"**关闭热点**"（并发模式会借此把 Wi-Fi 频段偏好恢复成 5GHz），再执行下面的命令——最后一步删除的状态目录里存着频段备份，先关再删最稳妥。
 
 ```bash
-# 1) 停止并禁用后端服务（热点开着的话会一并停掉）
+# 1) 停止并禁用后端服务（停服务会自动清理：恢复 Wi-Fi 频段偏好、拆掉 NAT/转发规则）
 sudo systemctl disable --now kde-hotspot kde-hotspot-dhcp kde-hotspot-normal
+# 若服务已不存在/规则仍有残留，手动清理一次：
+sudo /usr/local/sbin/kde-hotspot-ctl cleanup 2>/dev/null || true
 
 # 2) 删除后端文件（控制脚本、systemd 单元、polkit、NM 的 ap0 配置）
 sudo rm -f /etc/systemd/system/kde-hotspot.service \
@@ -195,7 +205,7 @@ sudo rm -f /etc/systemd/system/kde-hotspot.service \
            /usr/share/polkit-1/actions/org.kde.hotspotctl.policy \
            /etc/polkit-1/rules.d/49-kde-hotspot.rules \
            /etc/NetworkManager/conf.d/99-kde-hotspot-ap0.conf
-sudo rm -rf /etc/kde-hotspot /var/lib/kde-hotspot
+sudo rm -rf /etc/kde-hotspot /var/lib/kde-hotspot /usr/local/share/kde-hotspot
 sudo systemctl daemon-reload && sudo nmcli general reload
 
 # 3) 清理可能残留的虚拟接口与普通模式 NM profile（不存在会自动跳过）

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-16 11:12+0800\n"
+"POT-Creation-Date: 2026-09-16 12:43+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -48,7 +48,7 @@ msgid "Hotspot"
 msgstr ""
 
 #: plasmoid/contents/ui/FullRepresentation.qml:94
-#: plasmoid/contents/ui/main.qml:41
+#: plasmoid/contents/ui/main.qml:44
 msgctxt "The hotspot is switched off"
 msgid "Off"
 msgstr ""
@@ -58,7 +58,7 @@ msgid "Standby (no beacon)"
 msgstr ""
 
 #: plasmoid/contents/ui/FullRepresentation.qml:96
-#: plasmoid/contents/ui/main.qml:77
+#: plasmoid/contents/ui/main.qml:93
 msgid "%1 device"
 msgid_plural "%1 devices"
 msgstr[0] ""
@@ -78,110 +78,127 @@ msgstr ""
 
 #: plasmoid/contents/ui/FullRepresentation.qml:116
 msgid ""
+"⚠ The config is not readable by your user, so the mode/name/password shown "
+"here are defaults. Re-run install.sh (or add your user to the network group) "
+"to fix."
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:128
+msgid ""
+"⚠ Wireless interface %1 not found — check STA_IF in /etc/kde-hotspot/config "
+"(the hotspot would just sit in standby)."
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:140
+msgid ""
 "⚠ 5GHz was refused by the hardware, the hotspot fell back to 2.4GHz. Wi-Fi "
 "moved to 2.4G; the band preference is restored when the hotspot is turned "
 "off."
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:126
+#: plasmoid/contents/ui/FullRepresentation.qml:150
 msgid ""
 "⚠ Normal mode: turning on the hotspot disconnects the current Wi-Fi (uplink "
 "then relies on wired network)"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:137
+#: plasmoid/contents/ui/FullRepresentation.qml:162
 msgid "Running…"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:137
+#: plasmoid/contents/ui/FullRepresentation.qml:162
 msgid "Starting hotspot…"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:138
+#: plasmoid/contents/ui/FullRepresentation.qml:163
+msgid "Starting hotspot… (click to cancel)"
+msgstr ""
+
+#: plasmoid/contents/ui/FullRepresentation.qml:164
 msgid "Turn off hotspot"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:138
+#: plasmoid/contents/ui/FullRepresentation.qml:164
 msgid "Turn on hotspot"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:148
+#: plasmoid/contents/ui/FullRepresentation.qml:174
 msgid "Hotspot mode"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:155
+#: plasmoid/contents/ui/FullRepresentation.qml:181
 msgid "Concurrent (Wi-Fi stays on, hotspot follows the Wi-Fi channel)"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:163
+#: plasmoid/contents/ui/FullRepresentation.qml:189
 msgid "Normal (disconnect Wi-Fi, whole NIC as hotspot)"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:172
+#: plasmoid/contents/ui/FullRepresentation.qml:198
 msgid "Autostart hotspot at boot"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:183
+#: plasmoid/contents/ui/FullRepresentation.qml:209
 msgid "Hotspot name & password"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:194
+#: plasmoid/contents/ui/FullRepresentation.qml:220
 msgid "Current password"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:197
+#: plasmoid/contents/ui/FullRepresentation.qml:223
 msgid "(not set)"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:202
+#: plasmoid/contents/ui/FullRepresentation.qml:228
 msgid "Hide password"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:202
+#: plasmoid/contents/ui/FullRepresentation.qml:228
 msgid "Show password"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:212
+#: plasmoid/contents/ui/FullRepresentation.qml:238
 msgid "Hotspot name (1-32 characters)"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:221
+#: plasmoid/contents/ui/FullRepresentation.qml:247
 msgid "New password (8-63 characters, empty = keep password)"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:230
+#: plasmoid/contents/ui/FullRepresentation.qml:256
 msgid "Apply name/password"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:244
+#: plasmoid/contents/ui/FullRepresentation.qml:270
 msgid ""
 "When the hotspot is running it restarts automatically to apply the change "
 "(connected devices must reconnect)."
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:257
+#: plasmoid/contents/ui/FullRepresentation.qml:283
 msgid "Dependencies: all ready ✓"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:258
+#: plasmoid/contents/ui/FullRepresentation.qml:284
 msgid "Dependencies: %1 missing ⚠"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:262
+#: plasmoid/contents/ui/FullRepresentation.qml:288
 msgid "Recheck"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:290
+#: plasmoid/contents/ui/FullRepresentation.qml:316
 msgid ""
 "Fix commands (one auth prompt; package installs are deliberately not "
 "password-free)"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:309
+#: plasmoid/contents/ui/FullRepresentation.qml:335
 msgid "Copy commands"
 msgstr ""
 
-#: plasmoid/contents/ui/FullRepresentation.qml:314
+#: plasmoid/contents/ui/FullRepresentation.qml:340
 msgid "Commands copied to clipboard"
 msgstr ""
 
@@ -200,85 +217,90 @@ msgid ""
 "disconnects Wi-Fi and uses the whole NIC as the hotspot."
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:41
+#: plasmoid/contents/ui/main.qml:44
 msgid "Backend unavailable"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:41
+#: plasmoid/contents/ui/main.qml:44
 msgid "Running"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:41
+#: plasmoid/contents/ui/main.qml:44
 msgctxt "Wi-Fi not on 2.4GHz yet, hotspot not beaconing"
 msgid "Standby"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:45
+#: plasmoid/contents/ui/main.qml:48
 msgctxt "Short tray label"
 msgid "Off"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:74
+#: plasmoid/contents/ui/main.qml:90
 msgid "Wi-Fi hotspot: %1"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:76
+#: plasmoid/contents/ui/main.qml:92
 msgid "Hotspot %1 %2 ch%3"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:78
+#: plasmoid/contents/ui/main.qml:94
 msgid "(2.4GHz fallback)"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:80
+#: plasmoid/contents/ui/main.qml:96
 msgid "Normal mode: enabling will disconnect Wi-Fi"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:81
+#: plasmoid/contents/ui/main.qml:97
 msgid "Wi-Fi %1 %2 ch%3"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:81
+#: plasmoid/contents/ui/main.qml:97
 msgid "Wi-Fi not connected"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:134
+#: plasmoid/contents/ui/main.qml:159
 msgid "Hotspot is up: %1  %2"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:151
+#: plasmoid/contents/ui/main.qml:176
 msgid "Hotspot did not come up within %1 s — check journalctl -u kde-hotspot"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:174
+#: plasmoid/contents/ui/main.qml:199
 msgid "Done"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:174
+#: plasmoid/contents/ui/main.qml:199
 msgid "see journalctl -u kde-hotspot"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:176 plasmoid/contents/ui/main.qml:232
-#: plasmoid/contents/ui/main.qml:233 plasmoid/contents/ui/main.qml:235
+#: plasmoid/contents/ui/main.qml:201 plasmoid/contents/ui/main.qml:248
+#: plasmoid/contents/ui/main.qml:296 plasmoid/contents/ui/main.qml:297
+#: plasmoid/contents/ui/main.qml:299
 msgid "Failed: %1"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:180
+#: plasmoid/contents/ui/main.qml:210
 msgid "Turn-on accepted — waiting for the hotspot to beacon…"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:219
+#: plasmoid/contents/ui/main.qml:248
+msgid "could not stage the password file"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:283 plasmoid/contents/ui/main.qml:309
 msgid "Running: %1"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:232
+#: plasmoid/contents/ui/main.qml:296
 msgid "Hotspot name cannot be empty"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:233
+#: plasmoid/contents/ui/main.qml:297
 msgid "Hotspot name must be at most 32 characters"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:235
+#: plasmoid/contents/ui/main.qml:299
 msgid "Password must be 8-63 characters"
 msgstr ""

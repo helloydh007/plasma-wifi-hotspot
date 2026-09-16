@@ -1,14 +1,26 @@
 # 并发热点配置示例
-# 安装后请复制为 /etc/kde-hotspot/config 并改成你自己的：
-#   sudo install -m 644 config.example /etc/kde-hotspot/config
-STA_IF=wlp0s20f3     # 上行 Wi-Fi 接口（用 iw dev 查看）
+#
+# 正常安装（bash install.sh）时，deploy.sh 会把本文件装到
+# /etc/kde-hotspot/config 并**自动生成一套随机 SSID/密码**（安装时打印一次）。
+# 手工复制本文件的话请自行填写 SSID/PASS —— 留空或仍为示例占位值时，
+# 后端会拒绝启动热点（不会用公开已知的密码起热点）。
+
+STA_IF=wlp0s20f3     # 上行 Wi-Fi 接口；留空或接口不存在时后端会尝试自动探测
 AP_IF=ap0            # 虚拟热点接口名
-AP_IP=10.233.33.1    # 热点网关
+AP_IP=10.233.33.1    # 热点网关（/etc/kde-hotspot/dnsmasq.conf 会按此生成）
 AP_NET=10.233.33.0/24
-SSID=my-hotspot      # 热点名称（改成你的）
-PASS=change-me-12345 # 热点密码 8-63 字符（改成你的）
+SSID=                # 热点名称（1-32 字符，必填）
+PASS=                # 热点密码（8-63 字符，必填）
 MODE=concurrent      # concurrent=并发模式(保持 Wi-Fi) / normal=普通模式(断开 Wi-Fi)
+
+# ---- 以下为可选项（默认值即可用，取消注释后生效）----
 # FALLBACK_2G=yes    # 并发模式：固件拒绝 5GHz 时自动把 Wi-Fi 降到 2.4GHz 起热点
                      # （关闭热点时恢复频段偏好；设为 no 则不降频、热点保持关闭）
 # RULE_PRIO=8990     # 热点网段策略路由优先级（需高于代理软件 TUN 的 9000 段，
                      # 让客户端流量绕过代理直连上行；一般不用改）
+# COUNTRY=CN         # 监管域：hostapd country_code 与 iw reg set 都用它；
+                     # 留空则沿用当前 STA 的监管域
+# NORMAL_CHANNEL=6   # 普通模式热点的 2.4GHz 信道
+# DHCP_START=50      # dnsmasq 地址池起（网段最后一段）
+# DHCP_END=150       # dnsmasq 地址池止
+# DHCP_DNS=223.5.5.5,119.29.29.29   # 下发给客户端的 DNS

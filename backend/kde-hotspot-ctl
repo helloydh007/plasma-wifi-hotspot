@@ -32,14 +32,36 @@ NMCLI=/usr/bin/nmcli
 IPT=/usr/sbin/iptables
 
 # ---------- 读配置 ----------
-[ -r "$CONF" ] && . "$CONF"
-STA_IF=${STA_IF:-wlp0s20f3}
+CONF_READABLE=no
+if [ -r "$CONF" ]; then CONF_READABLE=yes; . "$CONF"; fi
 AP_IF=${AP_IF:-ap0}
 AP_IP=${AP_IP:-10.233.33.1}
 AP_NET=${AP_NET:-10.233.33.0/24}
 SSID=${SSID:-}
 PASS=${PASS:-}
 MODE=${MODE:-concurrent}
+COUNTRY=${COUNTRY:-}
+NORMAL_CHANNEL=${NORMAL_CHANNEL:-6}
+DHCP_START=${DHCP_START:-50}
+DHCP_END=${DHCP_END:-150}
+DHCP_DNS=${DHCP_DNS:-223.5.5.5,119.29.29.29}
+
+# STA_IF：留空或接口不存在时自动探测（第一个非 AP 的无线接口），
+# 避免"接口名写错 → 永远待命且毫无提示"。
+STA_IF=${STA_IF:-}
+sta_if_auto=no
+if [ -z "$STA_IF" ] || ! $IW dev "$STA_IF" info >/dev/null 2>&1; then
+    _detected=$($IW dev 2>/dev/null | awk '/Interface/{print $2}' | grep -vx "$AP_IF" | head -1)
+    if [ -n "${_detected:-}" ]; then
+        if [ -n "$STA_IF" ]; then
+            echo "[ctl] 配置的接口 $STA_IF 不存在，自动改用 $_detected" >&2
+        fi
+        STA_IF=$_detected
+        sta_if_auto=yes
+    elif [ -z "$STA_IF" ]; then
+        STA_IF=wlan0
+    fi
+fi
 
 log(){ echo "[ctl] $*" >&2; }
 mkdir -p "$STATE" 2>/dev/null || true   # 免特权调用 status 时可能无权创建，忽略
@@ -57,6 +79,47 @@ fix_conf_perm(){
     [ -r "$STATE/conf.group" ] && g=$(cat "$STATE/conf.group" 2>/dev/null)
     [ -n "${g:-}" ] && chgrp "$g" "$CONF" 2>/dev/null || true
     chmod 0640 "$CONF" 2>/dev/null || true
+}
+
+# ---------- 凭据有效性 ----------
+# 拒绝空值和 config.example 里的示例占位值：deploy.sh 会自动生成随机密码，
+# 但手工复制示例、或用户清空字段时必须明确拒绝，而不是拿一个公开已知的
+# 密码起热点。输出的第一行即"原因"。
+cred_problem(){
+    case "${SSID:-}" in
+        "") echo "热点名称未设置" ;;
+        my-hotspot|your-ssid*|change-me*|changeme*|example*) echo "热点名称仍是示例占位值（${SSID}）" ;;
+    esac
+    case "${PASS:-}" in
+        "") echo "热点密码未设置" ;;
+        change-me*|changeme*|your-password*|example*) echo "热点密码仍是示例占位值" ;;
+    esac
+    if [ -n "${SSID:-}" ] && [ "${#SSID}" -gt 32 ]; then echo "热点名称最长 32 个字符"; fi
+    if [ -n "${PASS:-}" ] && { [ "${#PASS}" -lt 8 ] || [ "${#PASS}" -gt 63 ]; }; then
+        echo "热点密码长度需 8-63 位"
+    fi
+}
+cred_ok(){ [ -z "$(cred_problem | head -1)" ]; }
+
+# ---------- 规则的拆除 ----------
+# ensure_rules（监督脚本）会加 NAT + 两条 FORWARD 放行 + 策略路由；
+# 关闭热点/切模式/停服务/卸载时都要拆掉，否则规则会留在系统里
+#（装了 iptables-persistent 时甚至跨重启残留）。
+remove_rules(){
+    local n
+    n=0; while $IPT -t nat -C POSTROUTING -s "$AP_NET" -o "$STA_IF" -j MASQUERADE 2>/dev/null; do
+        $IPT -t nat -D POSTROUTING -s "$AP_NET" -o "$STA_IF" -j MASQUERADE 2>/dev/null || break
+        n=$((n+1)); [ "$n" -gt 5 ] && break
+    done
+    n=0; while $IPT -C FORWARD -i "$AP_IF" -o "$STA_IF" -j ACCEPT 2>/dev/null; do
+        $IPT -D FORWARD -i "$AP_IF" -o "$STA_IF" -j ACCEPT 2>/dev/null || break
+        n=$((n+1)); [ "$n" -gt 5 ] && break
+    done
+    n=0; while $IPT -C FORWARD -i "$STA_IF" -o "$AP_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do
+        $IPT -D FORWARD -i "$STA_IF" -o "$AP_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || break
+        n=$((n+1)); [ "$n" -gt 5 ] && break
+    done
+    ip rule del from "$AP_NET" lookup main >/dev/null 2>&1 || true
 }
 
 # ---------- 只读探测 ----------
@@ -84,8 +147,7 @@ stop_concurrent(){
     systemctl stop "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
     ip link set "$AP_IF" down >/dev/null 2>&1 || true
     $IW dev "$AP_IF" del >/dev/null 2>&1 || true
-    # 清掉给热点网段加的策略路由规则（由监督脚本按需添加）
-    ip rule del from "$AP_NET" lookup main >/dev/null 2>&1 || true
+    remove_rules
 }
 stop_normal(){
     if $NMCLI -t -f NAME connection show 2>/dev/null | grep -qx "$NM_AP_CON"; then
@@ -114,11 +176,46 @@ restore_band(){
     fi
 }
 
+# ---------- DHCP/DNS 配置渲染 ----------
+# dnsmasq 的 interface / dhcp-range / 网关全部由 config 推导，避免用户改了
+# AP_IF/AP_IP/AP_NET 之后 dnsmasq 静默失效（旧版把这三项写死在 dnsmasq.conf）。
+sync_dnsmasq(){
+    local dnsf=/etc/kde-hotspot/dnsmasq.conf
+    local pre; pre=$(printf '%s' "$AP_IP" | cut -d. -f1-3)
+    [ -n "${pre:-}" ] || pre=10.233.33
+    local tmp; tmp=$(mktemp) || return 1
+    {
+        printf '# 由 kde-hotspot-ctl 依据 /etc/kde-hotspot/config 生成；请勿手动编辑\n'
+        printf 'interface=%s\n' "$AP_IF"
+        printf 'bind-dynamic\n'
+        printf 'dhcp-range=%s.%s,%s.%s,255.255.255.0,12h\n' "$pre" "$DHCP_START" "$pre" "$DHCP_END"
+        printf 'dhcp-option=3,%s\n' "$AP_IP"
+        printf 'dhcp-option=6,%s\n' "$DHCP_DNS"
+    } > "$tmp"
+    if ! cmp -s "$tmp" "$dnsf" 2>/dev/null; then
+        install -m 644 -o root -g root "$tmp" "$dnsf"
+        log "已按 config 重新生成 $dnsf（接口 $AP_IF / 网关 $AP_IP / DNS $DHCP_DNS）"
+        systemctl try-restart "$UNIT_DHCP" >/dev/null 2>&1 || true
+    fi
+    rm -f "$tmp"
+}
+
+# ---------- 清理（停服务后由 ExecStopPost 调用）----------
+# 恢复 Wi-Fi 频段偏好、拆掉 NAT/转发/策略路由、清掉回退标记。
+# 不做停止动作（此时服务已经在停），因此可安全地被 ExecStopPost 调用。
+do_cleanup(){
+    restore_band
+    remove_rules
+    rm -f "$STATE/fallback"
+    log "已清理：Wi-Fi 频段偏好、NAT/转发规则、回退标记"
+}
+
 # ---------- on / off ----------
 do_on(){
-    if [ -z "${SSID:-}" ] || [ "${#PASS}" -lt 8 ]; then
-        log "错误：请先在 /etc/kde-hotspot/config 里设置 SSID 与 PASS（密码至少 8 位）"
-        result false "请先设置 SSID 与 PASS（密码至少 8 位）"
+    if ! cred_ok; then
+        local why; why=$(cred_problem | head -1)
+        log "错误：$why（请编辑 /etc/kde-hotspot/config）"
+        result false "$why（请编辑 /etc/kde-hotspot/config）"
         return 1
     fi
     rm -f "$DISABLED"
@@ -135,12 +232,12 @@ do_on(){
             $NMCLI connection add type wifi ifname "$STA_IF" con-name "$NM_AP_CON" autoconnect no \
                 802-11-wireless.mode ap \
                 802-11-wireless.band bg \
-                802-11-wireless.channel 6 \
+                802-11-wireless.channel "$NORMAL_CHANNEL" \
                 802-11-wireless.ssid "$SSID" \
                 802-11-wireless-security.key-mgmt wpa-psk \
                 802-11-wireless-security.psk "$PASS" \
                 ipv4.method shared >/dev/null 2>&1 || { log "创建热点 profile 失败"; result false "创建热点 profile 失败"; return 1; }
-            log "已创建普通模式热点 profile（ch6, shared）"
+            log "已创建普通模式热点 profile（ch$NORMAL_CHANNEL, shared）"
         fi
         $NMCLI connection up "$NM_AP_CON" >/dev/null 2>&1 || { log "激活普通模式热点失败"; result false "激活普通模式热点失败"; return 1; }
         log "普通模式热点已开启（SSID=$SSID）"
@@ -148,6 +245,7 @@ do_on(){
         ;;
       *)
         stop_normal
+        sync_dnsmasq
         systemctl start "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
         sleep 1
         if ! systemctl is-active --quiet "$UNIT_MAIN"; then
@@ -160,7 +258,6 @@ do_on(){
         result true "开启指令已下发，热点正在启动（将跟随 Wi-Fi 信道发信标）"
         ;;
     esac
-    rm -f "$DISABLED"
 }
 
 do_off(){
@@ -233,22 +330,58 @@ do_autostart(){
 
 # ---------- 修改热点名称/密码 ----------
 set_credentials(){
-    local ssid="${1:-}" pass="${2:-}"
+    local ssid="" pass="" pf=""
+    # 解析：set-credentials SSID [PASS|-] [--pass-file FILE]
+    # PASS 为 "-" 时从 stdin 读；--pass-file 从 600 文件读后删除（避免密码进 argv）
+    while [ "$#" -gt 0 ]; do
+        case "${1:-}" in
+            --pass-file)
+                shift
+                pf="${1:-}"
+                [ "$#" -gt 0 ] && shift
+                ;;
+            *)
+                if [ -z "$ssid" ]; then ssid="$1"
+                elif [ -z "$pass" ]; then pass="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+    if [ -n "$pf" ]; then
+        pass=$(cat "$pf" 2>/dev/null || true)
+        rm -f "$pf" 2>/dev/null || true
+    elif [ "$pass" = "-" ]; then
+        IFS= read -r pass || pass=""
+    fi
     case "$ssid" in *$'\n'*) log "SSID 不能含换行"; result false "SSID 不能含换行"; return 1;; esac
     case "$pass" in *$'\n'*) log "密码不能含换行"; result false "密码不能含换行"; return 1;; esac
     [ -n "$ssid" ] || { log "SSID 不能为空"; result false "SSID 不能为空"; return 1; }
     [ "${#ssid}" -le 32 ] || { log "SSID 最长 32 个字符"; result false "SSID 最长 32 个字符"; return 1; }
+    case "$ssid" in
+        my-hotspot|your-ssid*|change-me*|changeme*|example*)
+            log "拒绝把名称设为示例占位值：$ssid"; result false "请换一个热点名称（不能是示例占位值）"; return 1 ;;
+    esac
     if [ -n "$pass" ]; then
         if [ "${#pass}" -lt 8 ] || [ "${#pass}" -gt 63 ]; then
             log "密码长度需 8-63 位"; result false "密码长度需 8-63 位"; return 1
         fi
+        case "$pass" in
+            change-me*|changeme*|your-password*|example*)
+                log "拒绝把密码设为示例占位值"; result false "请换一个密码（不能是示例占位值）"; return 1 ;;
+        esac
     fi
     local tmp; tmp=$(mktemp) || { result false "无法创建临时文件"; return 1; }
     cp -a "$CONF" "$tmp" 2>/dev/null || true
     # 用 awk 重写整行；值经环境变量传入（-v 会解释反斜杠转义，密码含 \ 时会被改写）
     ZK_SSID="$ssid" ZK_PASS="$pass" awk '
         /^SSID=/ { print "SSID=" ENVIRON["ZK_SSID"]; done_ssid=1; next }
-        /^PASS=/ { if (ENVIRON["ZK_PASS"] != "") print "PASS=" ENVIRON["ZK_PASS"]; done_pass=1; next }
+        /^PASS=/ {
+            # 密码留空表示"只改名称"，此时必须保留原有 PASS 行；
+            # 旧实现直接跳过该行 → 会把密码从配置里删掉
+            if (ENVIRON["ZK_PASS"] != "") print "PASS=" ENVIRON["ZK_PASS"]; else print
+            done_pass=1; next
+        }
         { print }
         END {
             if (!done_ssid) print "SSID=" ENVIRON["ZK_SSID"]
@@ -305,7 +438,10 @@ do_status(){
         fi
     else
         if [ -n "$(ap0_channel)" ]; then
-            hot=yes; mech=hostapd; hch=$(ap0_channel); hband=2.4G; gw="$AP_IP"
+            hot=yes; mech=hostapd; hch=$(ap0_channel); gw="$AP_IP"
+            # 频段按 ap0 实际信道推导：5GHz 并发热点（固件支持时）就该显示 5G，
+            # 否则面板会出现"2.4G ch44"这种自相矛盾的显示
+            if [ "${hch:-0}" -le 14 ] 2>/dev/null; then hband=2.4G; else hband=5G; fi
         elif [ "$(concurrent_running)" = yes ]; then
             mech=hostapd
         fi
@@ -313,6 +449,7 @@ do_status(){
 
     local disabled=false; [ -e "$DISABLED" ] && disabled=true
     local fb=false; [ -e "$STATE/fallback" ] && fb=true
+    local iface_present=yes; $IW dev "$STA_IF" info >/dev/null 2>&1 || iface_present=no
     local clients=0
     if [ -r /var/lib/misc/dnsmasq.leases ]; then
         clients=$(grep -c . /var/lib/misc/dnsmasq.leases 2>/dev/null || true)
@@ -323,8 +460,12 @@ do_status(){
     printf '  "mode": "%s",\n' "$MODE"
     printf '  "disabled": %s,\n' "$disabled"
     printf '  "autostart": "%s",\n' "$(autostart_state)"
-    printf '  "wifi": {"iface": "%s", "type": "%s", "connected": "%s", "ssid": "%s", "channel": "%s", "freq": "%s", "band": "%s"},\n' \
-        "$STA_IF" "$(jstr "${it:-}")" "$conn" "$(jstr "${ssid:-}")" "${ch:-}" "${freq:-}" "${band:-}"
+    # 配置不可读（用户不在授权组）时，mode/SSID/PASS 都是默认值/空值，
+    # 插件据此提示"读到的是默认值"，而不是把默认值当成真实状态
+    printf '  "config_readable": %s,\n' "$([ "$CONF_READABLE" = yes ] && echo true || echo false)"
+    printf '  "sta_if_auto": %s,\n' "$([ "$sta_if_auto" = yes ] && echo true || echo false)"
+    printf '  "wifi": {"iface": "%s", "present": "%s", "type": "%s", "connected": "%s", "ssid": "%s", "channel": "%s", "freq": "%s", "band": "%s"},\n' \
+        "$STA_IF" "$iface_present" "$(jstr "${it:-}")" "$conn" "$(jstr "${ssid:-}")" "${ch:-}" "${freq:-}" "${band:-}"
     printf '  "hotspot": {"running": "%s", "mechanism": "%s", "ssid": "%s", "pass": "%s", "channel": "%s", "band": "%s", "gateway": "%s", "clients": %s, "fallback": %s},\n' \
         "$hot" "$mech" "$(jstr "$SSID")" "$(jstr "$PASS")" "${hch:-}" "${hband:-}" "${gw:-}" "$clients" "$fb"
     printf '  "concurrent_service_active": "%s",\n' "$(concurrent_running)"
@@ -338,7 +479,9 @@ case "${1:-}" in
   off)       do_off ;;
   mode)      do_mode "${2:-}" ;;
   autostart) do_autostart "${2:-}" ;;
-  set-credentials) set_credentials "${2:-}" "${3:-}" ;;
+  set-credentials) shift; set_credentials "$@" ;;
+  cleanup)   do_cleanup ;;
+  sync-helpers) sync_dnsmasq ;;
   status)    do_status ;;
   *) cat >&2 <<EOF
 用法: kde-hotspot-ctl <命令>
@@ -346,7 +489,10 @@ case "${1:-}" in
   off                    关闭热点
   mode concurrent|normal 切换模式（会先停掉两套机制）
   autostart on|off       开机自启
-  set-credentials SSID [PASS]   修改热点名称/密码（PASS 省略则只改名称）
+  set-credentials SSID [PASS]   改热点名称/密码
+        PASS 省略=只改名称；PASS 为 - =从 stdin 读；--pass-file FILE =从文件读后删除
+  cleanup                清理残留（恢复频段偏好、拆除 NAT/转发规则、清回退标记）
+  sync-helpers           按 config 重新生成 dnsmasq.conf
   status --json          状态 JSON
 EOF
      exit 2 ;;

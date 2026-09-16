@@ -19,13 +19,13 @@ set -u
 umask 077
 CONF=/etc/kde-hotspot/config
 [ -r "$CONF" ] && . "$CONF"
-STA_IF=${STA_IF:-wlp0s20f3}
 AP_IF=${AP_IF:-ap0}
 AP_IP=${AP_IP:-10.233.33.1}
 AP_NET=${AP_NET:-10.233.33.0/24}
 SSID=${SSID:-}
 PASS=${PASS:-}
 MODE=${MODE:-concurrent}
+COUNTRY=${COUNTRY:-}
 STATE=/var/lib/kde-hotspot
 DISABLED="$STATE/disabled"
 RUN=/run/kde-hotspot
@@ -34,9 +34,43 @@ RULE_PRIO=${RULE_PRIO:-8990}
 IW=/usr/sbin/iw
 IPT=/usr/sbin/iptables
 NMCLI=/usr/bin/nmcli
+CTL=/usr/local/sbin/kde-hotspot-ctl
 
 log(){ echo "[kde-hotspot] $*"; }
 mkdir -p "$RUN" "$STATE"
+
+# STA_IF：留空/接口不存在时自动探测（第一个非 AP 的无线接口）
+STA_IF=${STA_IF:-}
+if [ -z "$STA_IF" ] || ! $IW dev "$STA_IF" info >/dev/null 2>&1; then
+    _d=$($IW dev 2>/dev/null | awk '/Interface/{print $2}' | grep -vx "$AP_IF" | head -1)
+    if [ -n "${_d:-}" ]; then
+        [ -n "$STA_IF" ] && log "配置的接口 $STA_IF 不存在，自动改用 $_d"
+        STA_IF=$_d
+    else
+        STA_IF=${STA_IF:-wlan0}
+    fi
+fi
+
+# 监管域：优先 config 的 COUNTRY，否则沿用当前无线监管域，最后兜底 CN
+if [ -z "$COUNTRY" ]; then
+    COUNTRY=$($IW reg get 2>/dev/null | awk '/^country/{print $2; exit}' | tr -d ':')
+    [ -n "$COUNTRY" ] || COUNTRY=CN
+fi
+
+# 凭据占位值检查（与 ctl 的 cred_problem 保持一致的最小集）
+cred_placeholder(){
+    case "$SSID" in ""|my-hotspot|your-ssid*|change-me*|changeme*|example*) return 0 ;; esac
+    case "$PASS" in ""|change-me*|changeme*|your-password*|example*) return 0 ;; esac
+    [ "${#PASS}" -lt 8 ] && return 0
+    return 1
+}
+
+# 上一轮异常退出（断电/被 kill）可能留下频段备份与残留规则：
+# 启动时先清理一次，避免 Wi-Fi 被永久钉在 2.4GHz。
+if [ -e "$STATE/band.backup" ]; then
+    log "发现上次遗留的频段备份，先恢复 Wi-Fi 频段偏好"
+    [ -x "$CTL" ] && "$CTL" cleanup >/dev/null 2>&1 || true
+fi
 
 sta_channel() {
     $IW dev 2>/dev/null | awk -v s="$STA_IF" '
@@ -110,8 +144,8 @@ while :; do
             sleep 5; continue
         fi
         loggedoff=0
-        # 未配置 SSID/密码则不启动（避免用默认值起热点）
-        if [ -z "${SSID:-}" ] || [ "${#PASS}" -lt 8 ]; then
+        # 凭据未设置/仍是示例占位值则不启动（绝不用公开已知的密码起热点）
+        if cred_placeholder; then
             sleep 10; continue
         fi
         # 普通模式下本脚本让位
@@ -126,7 +160,7 @@ while :; do
     HW=g
     [ "$CH" -le 14 ] 2>/dev/null || HW=a
     log "STA 在 ${HW} ch$CH → 热点跟随此信道启动（同信道并存）"
-    $IW reg set CN
+    $IW reg set "$COUNTRY" 2>/dev/null || true
     ensure_ap0 || { sleep 10; continue; }
 
     # 用 printf 生成配置：heredoc 会对 $SSID/$PASS 做变量展开和转义处理，
@@ -135,7 +169,7 @@ while :; do
         printf 'interface=%s\n' "$AP_IF"
         printf 'driver=nl80211\n'
         printf 'ssid=%s\n' "$SSID"
-        printf 'country_code=CN\n'
+        printf 'country_code=%s\n' "$COUNTRY"
         printf 'ieee80211d=1\n'
         printf 'hw_mode=%s\n' "$HW"
         printf 'channel=%s\n' "$CH"
@@ -152,31 +186,50 @@ while :; do
 
     # ---- 阶段2：跑热点，同时盯着 STA 是否仍在同一信道 ----
     log "启动 hostapd: $SSID @ ch$CH (网关 $AP_IP)"
-    /usr/sbin/hostapd -i "$AP_IF" "$RUN/hostapd.conf" &
+    : > "$RUN/hostapd.log"; chmod 600 "$RUN/hostapd.log"
+    /usr/sbin/hostapd -i "$AP_IF" "$RUN/hostapd.conf" >> "$RUN/hostapd.log" 2>&1 &
     HP=$!
-    # 确认 AP 真的发信标了：固件拒绝信道时 hostapd 会退出或 ap0 一直无信道
-    #（典型是 Intel LAR 下 5GHz 全 NO-IR）。此时按 FALLBACK_2G 回退。
-    ok=0
-    for _ in 1 2 3 4 5 6 7 8; do
-        kill -0 "$HP" 2>/dev/null || break
+    # 判断 hostapd 是"真的起来了"、"被固件拒绝"还是"在做 DFS 雷达检测"：
+    #  - ap0 有信道 → 成功
+    #  - 日志出现 Hardware does not support configured channel / Could not select
+    #    hw_mode / Failed to set beacon parameters → 固件拒绝该信道 → 可回退
+    #  - 日志出现 DFS/CAC → 这是 DFS 信道，需要 60 秒以上的雷达检测，
+    #    此时延长等待而**不能**判定失败（旧实现用固定 8 秒超时，会在 DFS 信道上
+    #    误报"固件拒绝"并把用户的 Wi-Fi 无谓地降到 2.4GHz）
+    ok=0; refused=0; deadline=15; t=0
+    while [ "$t" -lt "$deadline" ]; do
         if [ -n "$($IW dev "$AP_IF" info 2>/dev/null | awk '/channel/{print $2; exit}')" ]; then
             ok=1; break
         fi
-        sleep 1
+        if grep -qE 'Hardware does not support configured channel|Could not select hw_mode|Failed to set beacon parameters|Interface initialization failed' "$RUN/hostapd.log" 2>/dev/null; then
+            refused=1; break
+        fi
+        if grep -qiE 'DFS|radar|CAC' "$RUN/hostapd.log" 2>/dev/null; then
+            if [ "$deadline" -lt 150 ]; then
+                log "ch$CH 是 DFS 信道，hostapd 正在做雷达检测（CAC 通常 60 秒），延长等待"
+                deadline=150
+            fi
+        fi
+        kill -0 "$HP" 2>/dev/null || { refused=1; break; }
+        sleep 1; t=$((t+1))
     done
     if [ "$ok" -ne 1 ]; then
-        if [ "$loggedfail" -ne "$CH" ]; then
-            log "热点无法在 ch$CH 发信标（硬件/固件拒绝该信道）"
+        local_reason=$(grep -m1 -E 'Hardware does not support|Could not select hw_mode|Failed to set beacon|Interface initialization failed|Unable to setup interface' "$RUN/hostapd.log" 2>/dev/null)
+        if [ "$loggedfail" != "$CH" ]; then
+            log "热点未能在 ch$CH 发信标：${local_reason:-hostapd 未就绪（等待 ${t}s）}"
             loggedfail=$CH
         fi
         kill "$HP" 2>/dev/null; wait "$HP" 2>/dev/null; HP=0
         ip link set "$AP_IF" down 2>/dev/null
-        if [ "$CH" -gt 14 ] && [ "${FALLBACK_2G:-yes}" != "no" ]; then
+        # 只有确认是"固件拒绝"才回退；DFS 等待超时等情形保持原状
+        if [ "$refused" -eq 1 ] && [ "$CH" -gt 14 ] && [ "${FALLBACK_2G:-yes}" != "no" ]; then
             force_sta_2g
             # 给面板一个"发生过回退"的标记（status JSON 的 fallback 字段）。
             # 无敏感信息，设为可读，插件才能免特权读到。
             printf '%s\n' "$CH" > "$STATE/fallback" 2>/dev/null || true
             chmod 0644 "$STATE/fallback" 2>/dev/null || true
+        elif [ "$refused" -ne 1 ] && [ "$deadline" -ge 150 ]; then
+            log "ch$CH 的 DFS 雷达检测未在等待窗口内完成，暂不发信标（不降频）"
         fi
         sleep 3
         continue
@@ -184,9 +237,12 @@ while :; do
     loggedfail=0
     # 5G 热点成功发信标：此前"回退到 2.4G"的标记已过时，清除
     [ "$HW" = a ] && rm -f "$STATE/fallback"
-    misses=0
+    misses=0; tick=0
     while kill -0 "$HP" 2>/dev/null; do
-        ensure_rules
+        # 规则自检降频：每 ~15 秒一次。原实现每 3 秒跑 ip rule show + 3 次
+        # iptables -C（每天约 11 万次进程创建，且每次都要抢 xtables 锁）。
+        tick=$((tick+1))
+        [ $((tick % 5)) -eq 1 ] && ensure_rules
         # 手动关闭 → 立即停
         if [ -e "$DISABLED" ]; then
             log "收到关闭指令，停止热点"
