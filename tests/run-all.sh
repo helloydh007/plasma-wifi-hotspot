@@ -56,7 +56,7 @@ bash tests/test-supervisor.sh || bad "监督脚本测试失败"
 step "5) backend 与插件包内副本一致性"
 bash sync-backend.sh --check || bad "两处后端不一致（运行 bash sync-backend.sh）"
 
-step "6) QML 语法检查（qmllint，版本无关；含"这道门是活的"自检）"
+step "6) QML 语法检查（qmllint，版本无关；含「这道门是活的」自检）"
 QML=""; QML_LD=""
 if [ -x .tools/qml/qmllint ]; then
     QML="$PWD/.tools/qml/qmllint"; QML_LD="$PWD/.tools/qml/lib"

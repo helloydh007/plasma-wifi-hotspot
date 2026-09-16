@@ -47,15 +47,15 @@ if [ "$BARE" = 1 ]; then
     fi
 else
     "$QML" "$BAD" >"$OUT" 2>&1 || true
-    if ! grep -qE "$SYN" "$OUT"; then
+    if ! grep -E "$SYN" "$OUT" | grep -qv '^Warning:'; then
         echo "FAIL 自检：本机 qmllint（$("$QML" --version 2>&1 | head -1)）报语法错的措辞不在已知集合里，"
         echo "     无法可靠判定——请升级/固定工具版本，不要留一道空门"
         exit 1
     fi
     "$QML" "${FILES[@]}" >"$OUT" 2>&1 || true
-    if grep -qE "$SYN" "$OUT"; then
+    if grep -E "$SYN" "$OUT" | grep -qv '^Warning:'; then
         echo "FAIL QML 有语法错误："
-        grep -E "$SYN" "$OUT" | head -5
+        grep -E "$SYN" "$OUT" | grep -v '^Warning:' | head -5
         exit 1
     fi
     echo "（本机 qmllint 无 --bare：已用自检验证过的措辞集合判定，import 相关噪音忽略）"
