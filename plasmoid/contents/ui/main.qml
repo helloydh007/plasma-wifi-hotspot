@@ -81,7 +81,11 @@ PlasmoidItem {
             : (wifiSsid ? i18n("Wi-Fi %1 %2 ch%3", wifiSsid, wifiBand, (wifiCh ? String(wifiCh) : "")) : i18n("Wi-Fi not connected")))
 
     // ---------- 命令 ----------
-    readonly property string statusCmd: "pkexec " + ctl + " status"
+    // status 只做只读探测（iw/nmcli/systemctl + 读配置），**刻意不走 pkexec**：
+    // pkexec 每次都会 fork 一个 root 进程并建立 polkit/PAM 会话，按秒轮询等于
+    // 每天数万次；配置与状态标记已授予当前用户只读权限（见 backend/deploy.sh），
+    // 因此直接以用户身份运行即可。需要特权的操作（on/off/mode/…）仍走 pkexec。
+    readonly property string statusCmd: ctl + " status"
     readonly property var depsPaths: [
         "/usr/sbin/hostapd",
         "/usr/sbin/dnsmasq",
@@ -98,6 +102,8 @@ PlasmoidItem {
     ]
     readonly property string depsCmd: "sh -c 'for p in " + depsPaths.join(" ")
         + "; do if [ -e $p ]; then echo OK $p; else echo MISS $p; fi; done; "
+        + "if [ -r /etc/kde-hotspot/config ]; then echo OK 配置可读(免特权状态); "
+        + "else echo MISS 配置不可读-重跑 install.sh 授权; fi; "
         + "if pkcheck --action-id org.kde.hotspotctl.run --process $$ >/dev/null 2>&1; "
         + "then echo OK polkit-免密授权; else echo MISS polkit-免密授权; fi'"
 
@@ -109,7 +115,7 @@ PlasmoidItem {
     //    拿到结果后立即断开。
     property int oneShotSeq: 0
 
-    // pollInterval 可能取不到默认值（undefined→NaN），显式兜底
+    // pollInterval 配置项单位是"秒"（可能取不到默认值 undefined→NaN，显式兜底）
     readonly property int pollInterval: {
         var p = Number(Plasmoid.configuration.pollInterval)
         if (!isFinite(p) || p < 2) { p = 5 }
@@ -120,7 +126,9 @@ PlasmoidItem {
         id: statusSource
         engine: "executable"
         connectedSources: [root.statusCmd]
-        interval: root.pollInterval
+        // 引擎的 interval 单位是**毫秒**（且 executable 引擎最小轮询间隔 1000ms），
+        // 曾经漏乘 1000 → 5 被当 5ms 用、被抬到 1000ms，变成每秒一次查询。
+        interval: root.pollInterval * 1000
         onNewData: (sourceName, data) => {
             if (data.stdout && data.stdout.length > 0) {
                 try { root.st = JSON.parse(data.stdout) }

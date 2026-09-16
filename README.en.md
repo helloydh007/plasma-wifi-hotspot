@@ -95,7 +95,10 @@ Action commands print one JSON line (`{"ok":true,"message":"…"}`) on stdout �
 
 - The polkit rule authorizes **only `/usr/local/sbin/kde-hotspot-ctl`** (the action carries an `org.freedesktop.policykit.exec.path` annotation); it cannot run arbitrary commands. Delete `/etc/polkit-1/rules.d/49-kde-hotspot.rules` to restore password prompts.
 - Package installation is deliberately **not** inside the password-free scope.
-- The hotspot password lives in `/etc/kde-hotspot/config` (600, root-only). `status` exposes it to the authorized user session so the applet can display it; on a shared system, remove the `"pass"` field from `do_status` if that is unacceptable.
+- **Read-only status never goes through pkexec**: the applet polls `kde-hotspot-ctl status` as the normal user (only read-only iw/nmcli/systemctl queries plus reading the config/state flags). This avoids forking a root process and creating a polkit/PAM session on every poll (it used to be once per second, ~86k/day). Privileged operations (on/off/mode/autostart/set-credentials) still use `pkexec`. The polling interval in the applet settings is in **seconds** (default 5, range 2–60).
+- The hotspot password lives in `/etc/kde-hotspot/config` (`root:netdev 640` — readable only by root and the network-admin group). That user set matches the one authorized by the polkit rule (sudo/netdev groups run ctl without a password), so the security level is unchanged; it lets the applet read SSID/password/mode without privileges. No default passwords are built in, and the backend refuses to start without a config.
+  `status`'s JSON includes the current SSID and password (masked by default in the panel; the eye button reveals it) — if that is unacceptable on a shared machine, drop the `pass` field from `do_status`.
+- Non-sensitive state flags (`disabled`, `fallback`) are 644 for the unprivileged status query; `/run/kde-hotspot/hostapd.conf` (contains the password) stays 600.
 
 ## Uninstall
 

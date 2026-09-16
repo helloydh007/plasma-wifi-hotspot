@@ -173,8 +173,10 @@ while :; do
         ip link set "$AP_IF" down 2>/dev/null
         if [ "$CH" -gt 14 ] && [ "${FALLBACK_2G:-yes}" != "no" ]; then
             force_sta_2g
-            # 给面板一个"发生过回退"的标记（status JSON 的 fallback 字段）
-            echo "$CH" > "$STATE/fallback"
+            # 给面板一个"发生过回退"的标记（status JSON 的 fallback 字段）。
+            # 无敏感信息，设为可读，插件才能免特权读到。
+            printf '%s\n' "$CH" > "$STATE/fallback" 2>/dev/null || true
+            chmod 0644 "$STATE/fallback" 2>/dev/null || true
         fi
         sleep 3
         continue

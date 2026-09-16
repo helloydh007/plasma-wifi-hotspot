@@ -42,7 +42,22 @@ PASS=${PASS:-}
 MODE=${MODE:-concurrent}
 
 log(){ echo "[ctl] $*" >&2; }
-mkdir -p "$STATE"
+mkdir -p "$STATE" 2>/dev/null || true   # 免特权调用 status 时可能无权创建，忽略
+
+# ---------- 权限辅助 ----------
+# 无敏感信息的状态标记（disabled/fallback）做成可读，
+# 这样插件可以免特权（不 fork root/不建 polkit 会话）轮询 status。
+touch_public(){ : > "$1" 2>/dev/null || true; chmod 0644 "$1" 2>/dev/null || true; }
+
+# 配置含热点密码：root 属主 + 640，读取权限授予网络管理组
+#（组名由 deploy.sh 写入 $STATE/conf.group，一般为 netdev）。
+# 这与 polkit 规则授权的用户集合一致，因此不降低安全等级。
+fix_conf_perm(){
+    local g=""
+    [ -r "$STATE/conf.group" ] && g=$(cat "$STATE/conf.group" 2>/dev/null)
+    [ -n "${g:-}" ] && chgrp "$g" "$CONF" 2>/dev/null || true
+    chmod 0640 "$CONF" 2>/dev/null || true
+}
 
 # ---------- 只读探测 ----------
 iface_type(){ $IW dev "$STA_IF" info 2>/dev/null | awk '/type/{print $2; exit}'; }
@@ -162,7 +177,7 @@ do_off(){
         result true "普通模式热点已关闭，Wi-Fi 已恢复"
         ;;
       *)
-        touch "$DISABLED"
+        touch_public "$DISABLED"
         stop_concurrent
         restore_band
         rm -f "$STATE/fallback"
@@ -176,7 +191,7 @@ do_mode(){
     local m="${1:-}"
     case "$m" in concurrent|normal) ;; *) log "模式必须是 concurrent 或 normal"; return 2;; esac
     # 切换模式时先停两套、并临时置 disabled 防止服务自己又起来
-    touch "$DISABLED"
+    touch_public "$DISABLED"
     stop_normal
     stop_concurrent
     if grep -q '^MODE=' "$CONF" 2>/dev/null; then
@@ -184,6 +199,7 @@ do_mode(){
     else
         printf '\nMODE=%s\n' "$m" >> "$CONF"
     fi
+    fix_conf_perm
     MODE="$m"
     # 模式切换后自启统一关闭（普通模式自启会在开机时断开 Wi-Fi，必须用户显式开启）
     rm -f "$STATE/autostart-normal"
@@ -238,8 +254,9 @@ set_credentials(){
             if (!done_ssid) print "SSID=" ENVIRON["ZK_SSID"]
             if (ENVIRON["ZK_PASS"] != "" && !done_pass) print "PASS=" ENVIRON["ZK_PASS"]
         }' "$CONF" > "$tmp" 2>/dev/null || { rm -f "$tmp"; result false "写入配置失败"; return 1; }
-    install -m 600 -o root -g root "$tmp" "$CONF"
+    install -m 640 -o root -g root "$tmp" "$CONF"
     rm -f "$tmp"
+    fix_conf_perm
     SSID="$ssid"; [ -n "$pass" ] && PASS="$pass"
     log "已更新配置：SSID=$ssid$([ -n "$pass" ] && echo "，密码已更新")"
 

@@ -164,8 +164,10 @@ pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> [<新密码>]
 
 - polkit 授权**只作用于 `/usr/local/sbin/kde-hotspot-ctl` 这一个脚本**（动作带 `org.freedesktop.policykit.exec.path` 注解），不能拿来执行任意命令。删除 `/etc/polkit-1/rules.d/49-kde-hotspot.rules` 即恢复成"每次弹密码"。
 - **包安装刻意不在免密范围内**：否则等于"任何用户进程都能免密装包"。所以插件里的依赖修复给的是可复制的命令。
-- 热点密码保存在 `/etc/kde-hotspot/config`（权限 600，仅 root 可读）。脚本不内置任何默认密码，配置缺失时拒绝启动。
-  `status` 的 JSON 里包含当前热点名称与密码（面板"当前密码"行默认打码，点眼睛图标显示）——这是授权给本机用户的功能；多人共用的机器上如不接受，删掉 `do_status` 里的 `pass` 字段即可。
+- **只读状态查询不经过 pkexec**：插件的状态轮询以普通用户身份运行 `kde-hotspot-ctl status`（只用 iw/nmcli/systemctl 只读查询 + 读配置/状态标记）。这样每次轮询不会 fork root 进程、不建立 polkit/PAM 会话（曾经每秒一次，约 8.6 万次/天）。需要特权的操作（on/off/mode/autostart/set-credentials）仍然走 `pkexec`。轮询间隔在插件配置里以**秒**为单位（默认 5，可调 2–60）。
+- 热点密码保存在 `/etc/kde-hotspot/config`（`root:netdev 640`，仅 root 与网络管理组可读）。这个用户集合与 polkit 规则授权的集合（sudo/netdev 组免密执行 ctl）一致，因此不降低安全等级；它让插件免特权读到 SSID/密码/MODE。脚本不内置任何默认密码，配置缺失时拒绝启动。
+  `status` 的 JSON 里包含当前热点名称与密码（面板"当前密码"行默认打码，点眼睛图标显示）——多人共用的机器上如不接受，删掉 `do_status` 里的 `pass` 字段即可。
+- 无敏感信息的状态标记（`disabled`、`fallback`）为 644，供免特权状态查询读取；`/run/kde-hotspot/hostapd.conf`（含密码）保持 600。
 - 后端服务以 root 运行是必需的（hostapd/dnsmasq/iptables 都需要特权）。
 
 ## 卸载

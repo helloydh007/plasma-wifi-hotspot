@@ -37,8 +37,26 @@ if [ ! -e /etc/kde-hotspot/config ]; then
     echo "  已生成 /etc/kde-hotspot/config（占位值，请修改 SSID/PASS）"
 fi
 install -m 644 "$SRC/dnsmasq.conf" /etc/kde-hotspot/dnsmasq.conf
-# 配置里有热点密码，收紧权限到 600（脚本以 root 运行，不受影响）
-chmod 600 /etc/kde-hotspot/config
+# 配置里有热点密码：root 属主 + 640，读取权限授予网络管理组。
+# 目的：插件的 status 只是只读查询，不该每次都 pkexec（fork root + 建 polkit 会话）；
+# 授予该组后插件即可免特权读到 SSID/密码/MODE。该用户集合与 polkit 规则
+# （sudo/netdev 组免密执行 ctl）一致，因此不降低安全等级。
+CONF_GROUP=""
+for g in netdev sudo wheel; do
+    if getent group "$g" >/dev/null 2>&1; then CONF_GROUP="$g"; break; fi
+done
+if [ -n "$CONF_GROUP" ]; then
+    echo "$CONF_GROUP" > /var/lib/kde-hotspot/conf.group
+    chgrp "$CONF_GROUP" /etc/kde-hotspot/config 2>/dev/null || true
+    chmod 640 /etc/kde-hotspot/config
+    echo "  配置权限 root:$CONF_GROUP 640（该组可只读，供插件免特权读状态）"
+else
+    chmod 600 /etc/kde-hotspot/config
+    rm -f /var/lib/kde-hotspot/conf.group
+    echo "  未找到 netdev/sudo/wheel 组，配置保持 600（插件读不到密码，其余功能正常）"
+fi
+# 无敏感信息的状态标记设为可读（供免特权 status 使用）
+chmod 0644 /var/lib/kde-hotspot/disabled /var/lib/kde-hotspot/fallback 2>/dev/null || true
 
 echo "== 4b) 配置里补上 MODE 键（默认并发模式）=="
 if ! grep -q '^MODE=' /etc/kde-hotspot/config 2>/dev/null; then
