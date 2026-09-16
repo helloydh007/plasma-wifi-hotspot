@@ -53,6 +53,12 @@ ensure_ap0() {
     ip addr replace "$AP_IP/24" dev "$AP_IF" 2>/dev/null
     ip link set "$AP_IF" up
     sysctl -qw net.ipv4.ip_forward=1
+    ensure_rules
+}
+
+# NAT/转发规则。Docker 等软件重启时会清掉 FORWARD 链上的第三方规则并把策略
+# 设为 DROP，导致热点客户端断网；因此除起 AP 时设置外，阶段2 每轮循环补检一次。
+ensure_rules(){
     $IPT -t nat -C POSTROUTING -s "$AP_NET" -o "$STA_IF" -j MASQUERADE 2>/dev/null || \
         $IPT -t nat -I POSTROUTING -s "$AP_NET" -o "$STA_IF" -j MASQUERADE
     $IPT -C FORWARD -i "$AP_IF" -o "$STA_IF" -j ACCEPT 2>/dev/null || \
@@ -169,6 +175,7 @@ while :; do
     [ "$HW" = a ] && rm -f "$STATE/fallback"
     misses=0
     while kill -0 "$HP" 2>/dev/null; do
+        ensure_rules
         # 手动关闭 → 立即停
         if [ -e "$DISABLED" ]; then
             log "收到关闭指令，停止热点"
