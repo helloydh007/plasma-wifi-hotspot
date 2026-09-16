@@ -65,7 +65,7 @@ git clone <this repo> && cd plasma-wifi-hotspot
 bash install.sh
 ```
 
-`install.sh` does four things: deploys the backend via pkexec (one auth prompt), installs the plasmoid user-level, installs a desktop entry, and restarts plasmashell. Then:
+`install.sh` does four things: deploys the backend via pkexec (one auth prompt), installs the plasmoid user-level, installs a desktop entry, and refreshes the UI (restarting plasmashell only if the applet content changed — see Update below). Then:
 
 1. Edit `/etc/kde-hotspot/config` (mode 600) and set your `SSID` / `PASS`. **The backend refuses to start the hotspot with missing credentials** — no default passwords.
 2. Add the applet to the system tray: right-click the panel → Edit System Tray → Entries → enable "Wi-Fi 热点控制", or drag it onto the panel.
@@ -74,10 +74,14 @@ bash install.sh
 
 ```bash
 git pull
-bash install.sh   # re-syncs backend, updates the plasmoid, restarts plasmashell
+bash install.sh               # restarts plasmashell only when the applet content changed
+bash install.sh --no-restart  # never restart (new UI applies after re-login)
 ```
 
-plasmashell caches QML in memory — an update without the restart keeps the old UI running. `install.sh` handles it.
+plasmashell caches the applet QML in memory, so an applet update needs a restart (or re-login) to load the new UI.
+Plasma's built-in "block sleep/screen locking" (caffeine) lives in plasmashell's memory, so any restart resets it.
+That's why `install.sh` fingerpints the QML/metadata/config/translations and only restarts when they actually changed —
+backend-only updates (scripts, systemd units, polkit) never restart the shell.
 
 ## Usage / CLI
 
@@ -102,7 +106,7 @@ Action commands print one JSON line (`{"ok":true,"message":"…"}`) on stdout �
 
 ## Uninstall
 
-See the Chinese README (卸载) for the full script; in short: stop/disable the three `kde-hotspot*` systemd units, remove the backend files (`/usr/local/sbin/kde-hotspot-ctl`, `/usr/local/sbin/kde-hotspot.sh`, the units, the polkit policy + rule, the NetworkManager `conf.d` file, `/etc/kde-hotspot`, `/var/lib/kde-hotspot`), clean up the `ap0` interface and the `kde-hotspot-normal` NM profile if present, then `kpackagetool6 -t Plasma/Applet -r org.kde.hotspot` and remove `~/.local/share/applications/org.kde.hotspot.desktop`.
+See the Chinese README (卸载) for the full script; in short: remove the widget from the tray first (right-click → Remove), then stop/disable the three `kde-hotspot*` systemd units, remove the backend files (`/usr/local/sbin/kde-hotspot-ctl`, `/usr/local/sbin/kde-hotspot.sh`, the units, the polkit policy + rule, the NetworkManager `conf.d` file, `/etc/kde-hotspot`, `/var/lib/kde-hotspot`), clean up the `ap0` interface and the `kde-hotspot-normal` NM profile if present, then `kpackagetool6 -t Plasma/Applet -r org.kde.hotspot` and remove `~/.local/share/applications/org.kde.hotspot.desktop`. Removing the tray widget first means no plasmashell restart is needed (a restart would reset in-memory applet states such as the battery applet's caffeine toggle).
 
 ## Troubleshooting
 

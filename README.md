@@ -90,7 +90,7 @@ bash install.sh
 1. **部署后端**（pkexec，会弹一次授权框）：控制脚本、systemd 单元、polkit 动作与规则、NM 的 `ap0` unmanaged 配置
 2. 安装 **Plasma 插件**（用户级 `~/.local/share/plasma/plasmoids/`，不需要 root）
 3. 安装**桌面入口**（应用菜单/KRunner 可搜"Wi-Fi 热点控制"）
-4. **重启 plasmashell**（否则托盘里还跑旧界面）
+4. **刷新界面**：插件内容变化时才重启 plasmashell（见下"更新"一节）
 
 装完两步收尾：
 
@@ -103,11 +103,19 @@ bash install.sh
 
 ```bash
 git pull
-bash install.sh     # 它会同步后端、更新插件，并重启 plasmashell
+bash install.sh               # 只在插件内容变化时才重启 plasmashell
+bash install.sh --no-restart  # 从不重启（新界面在注销重登后生效）
 ```
 
-**注意**：plasmashell 在加载插件时就把 QML 读进内存，用 `kpackagetool6 -u` 更新插件后**必须重启 plasmashell**（或注销重登），
-否则托盘里仍跑旧界面（表现为：图标没变、面板里看不到新加的选项）。`install.sh` 已经包含这一步。
+**关于 plasmashell 重启（重要）**：plasmashell 把插件 QML 读进内存，更新插件后**必须重启 plasmashell**（或注销重登）才会加载新界面
+（表现为：图标没变、面板里看不到新加的选项）。但重启会重建**所有**小组件，只在内存里保存的开关会复位——
+例如电池小程序的"阻止睡眠/咖啡因"、第三方插件未持久化的状态。
+
+因此 `install.sh` 只会在**插件内容确实变化时**才重启：它对 QML/元数据/配置/翻译取指纹并与上次安装比较，
+仅后端改动（脚本、systemd 单元、polkit 规则）不会触发重启。需要绝对不重启时用 `--no-restart`。
+
+> 想要一个不受 plasmashell 重启影响的"保持唤醒"：`systemd-inhibit --what=idle:sleep --why="手动保持唤醒" sleep infinity &`
+> （结束时 kill 该进程），它由独立进程持有抑制锁。
 
 ## 使用
 
@@ -194,10 +202,13 @@ sudo systemctl daemon-reload && sudo nmcli general reload
 sudo ip link delete ap0 2>/dev/null || true
 nmcli connection delete kde-hotspot-normal 2>/dev/null || true
 
-# 4) 卸载插件与桌面入口（用户级，无需 root），重启 plasmashell 让托盘图标立刻消失
+# 4) 先从托盘移除小组件（右键托盘图标 → 移除，或“系统托盘设置 → 条目”里取消勾选），
+#    再卸载插件——这样不必重启 plasmashell（重启会复位电池小程序的“阻止睡眠/咖啡因”等
+#    只存在于内存里的开关）
 kpackagetool6 -t Plasma/Applet -r org.kde.hotspot
 rm -f ~/.local/share/applications/org.kde.hotspot.desktop
-systemctl --user restart plasma-plasmashell
+# 若已卸载但托盘仍残留失效图标，再执行：
+# systemctl --user restart plasma-plasmashell
 ```
 
 说明：
