@@ -13,6 +13,9 @@
 set -e
 SRC="$(cd "$(dirname "$0")" && pwd)"
 HASHFILE="$HOME/.local/share/kde-hotspot/plasmoid.hash"
+# 界面指纹单独存一份：插件包内的后端副本（contents/backend）变化时必须重装包
+# （否则插件里「一键修复」用的副本会停在旧版），但**不需要**重启 plasmashell。
+UIHASHFILE="$HOME/.local/share/kde-hotspot/plasmoid.ui.hash"
 
 RESTART=auto
 for a in "$@"; do
@@ -24,9 +27,17 @@ for a in "$@"; do
     esac
 done
 
-# 只对"会影响已加载界面"的文件取指纹（QML/元数据/配置模式/翻译）；
-# 插件包内的后端副本（contents/backend）不影响界面，变化时无需重启。
+# 插件包内容指纹：覆盖包里所有安装内容（含 contents/backend）。
+# 决定要不要执行 kpackagetool6 重装。
 plasmoid_hash(){
+    ( cd "$SRC/plasmoid" && \
+      find metadata.json contents -type f 2>/dev/null \
+        | sort | xargs sha256sum | sha256sum | cut -d' ' -f1 )
+}
+
+# 界面指纹：只对"会影响已加载界面"的文件取指纹（QML/元数据/配置模式/翻译）。
+# 决定要不要重启 plasmashell——只更新了包内后端副本时不该重启。
+plasmoid_ui_hash(){
     ( cd "$SRC/plasmoid" && \
       find metadata.json contents/ui contents/config contents/locale -type f 2>/dev/null \
         | sort | xargs sha256sum | sha256sum | cut -d' ' -f1 )
@@ -64,8 +75,11 @@ fi
 echo
 echo "== 3) 安装 Plasma 插件（用户级，无需 root）=="
 NEW_HASH="$(plasmoid_hash)"
+NEW_UI_HASH="$(plasmoid_ui_hash)"
 OLD_HASH=""
 [ -r "$HASHFILE" ] && OLD_HASH="$(cat "$HASHFILE" 2>/dev/null)"
+OLD_UI_HASH=""
+[ -r "$UIHASHFILE" ] && OLD_UI_HASH="$(cat "$UIHASHFILE" 2>/dev/null)"
 NEED_RESTART=yes
 
 if [ "$NEW_HASH" = "$OLD_HASH" ] && kpackagetool6 -t Plasma/Applet -l 2>/dev/null | grep -qx 'io.github.helloydh007.hotspot'; then
@@ -79,6 +93,12 @@ else
     fi
     mkdir -p "$(dirname "$HASHFILE")"
     printf '%s\n' "$NEW_HASH" > "$HASHFILE"
+    printf '%s\n' "$NEW_UI_HASH" > "$UIHASHFILE"
+    # 只更新了包内后端副本（界面指纹没变）→ 重装了包但不需要重启 plasmashell
+    if [ "$NEW_UI_HASH" = "$OLD_UI_HASH" ]; then
+        echo "   只更新了插件包内容（界面未变）→ 不重启 plasmashell"
+        NEED_RESTART=no
+    fi
 fi
 
 echo
