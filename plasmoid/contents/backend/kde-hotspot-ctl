@@ -162,7 +162,8 @@ normal_running(){
 # 置为 activating/auto-restart，此时 is-active **仍然返回 0** —— 于是"服务其实已经死了"
 # 被判成"启动成功"（2026-09-16 实机故障：面板显示开启成功，热点完全不可用）。
 unit_states(){
-    systemctl show -p ActiveState -p SubState --value "${1:-}" 2>/dev/null
+    # 去掉空行：systemctl show 在多个单元之间会多打一个空行，按行号取会整体错位
+    systemctl show -p ActiveState -p SubState --value "${1:-}" 2>/dev/null | sed '/^$/d'
 }
 unit_running(){
     local out ast sub
@@ -635,8 +636,14 @@ do_status(){
     # 服务状态：一次 systemctl show 拿三个单元 × 两个属性（每单元 ActiveState、SubState），
     # 省进程创建；判定必须同时看 ActiveState 与 SubState（见 unit_running 的注释）
     local svc_main="" sub_main="" svc_dhcp="" sub_dhcp="" svc_norm="" sub_norm=""
-    { read -r svc_main; read -r sub_main; read -r svc_dhcp; read -r sub_dhcp; read -r svc_norm; read -r sub_norm; } <<< \
+    # 注意：多个单元之间 systemd 会多输出一个空行（真机实测），必须过滤后再按顺序取，
+    # 否则 ActiveState/SubState 会整体错位（表现为"DHCP 明明在跑却报未运行"）
+    local -a _sl=()
+    while IFS= read -r _l; do [ -n "$_l" ] && _sl+=("$_l"); done <<< \
         "$(systemctl show -p ActiveState -p SubState --value "$UNIT_MAIN" "$UNIT_DHCP" "$UNIT_NORMAL" 2>/dev/null)"
+    svc_main=${_sl[0]:-}; sub_main=${_sl[1]:-}
+    svc_dhcp=${_sl[2]:-}; sub_dhcp=${_sl[3]:-}
+    svc_norm=${_sl[4]:-}; sub_norm=${_sl[5]:-}
     local conc=no
     { [ "$svc_main" = active ] && [ "$sub_main" = running ]; } && conc=yes
     local dhcp=no

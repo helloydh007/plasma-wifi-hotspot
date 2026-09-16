@@ -95,7 +95,12 @@ case "${1:-}" in
          esac
          shift
      done
+     first=1
      for u in "$@"; do
+         # 真实 systemd 在多个单元之间会多输出一个空行，这里必须一致地模拟，
+         # 否则"按行号 read"的解析在真机上错位、在 mock 里却看不出来
+         [ "$first" = 1 ] || echo ""
+         first=0
          ast=inactive; sub=dead
          if [ -e "$S/unitstate.$u" ]; then
              IFS=: read -r ast sub < "$S/unitstate.$u"
@@ -364,6 +369,8 @@ is "频段 5G" "$(jget hotspot.band)" "5G"
 is "网关是 AP_IP" "$(jget hotspot.gateway)" "10.233.33.1"
 is "客户端数用监督脚本写的快照" "$(jget hotspot.clients)" "9"
 is "DHCP 在跑" "$(jget hotspot.dhcp_active)" "yes"
+is "多单元解析：systemd 的空行不会让 DHCP 状态错位" "$(jget hotspot.dhcp_active)" "yes"
+is "多单元解析：normal 单元状态也不会错位" "$(jget normal_service_state)" "inactive/dead"
 is "Wi-Fi 已连接" "$(jget wifi.connected)" "yes"
 is "Wi-Fi 频段来自信道" "$(jget wifi.band)" "2.4G"
 rm -f "$STATE/clients"
