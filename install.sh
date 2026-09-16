@@ -40,17 +40,39 @@ echo "== 2) 同步后端副本进插件包（供插件内“一键修复”）==
 bash "$SRC/sync-backend.sh"
 
 echo
+echo "== 2b) 迁移旧命名空间（org.kde.hotspot → io.github.helloydh007.hotspot）=="
+LEGACY_ID=org.kde.hotspot
+NEW_ID=io.github.helloydh007.hotspot
+if kpackagetool6 -t Plasma/Applet -l 2>/dev/null | grep -qx "$LEGACY_ID"; then
+    APPSRC="$HOME/.config/plasma-org.kde.plasma.desktop-appletsrc"
+    if [ -f "$APPSRC" ]; then
+        cp -a "$APPSRC" "$APPSRC.bak-namespace-migration"
+        # 托盘接线（extraItems/knownItems 等）里存的是插件 ID，必须一起改，
+        # 否则更新后托盘里的小组件会变成失效条目
+        sed -i "s/org\.kde\.hotspot/io.github.helloydh007.hotspot/g" "$APPSRC"
+        echo "   已更新托盘接线（原文件备份为 $(basename "$APPSRC").bak-namespace-migration）"
+    fi
+    kpackagetool6 -t Plasma/Applet -r "$LEGACY_ID" >/dev/null 2>&1 || true
+    rm -rf "$HOME/.local/share/plasma/plasmoids/$LEGACY_ID"
+    rm -f "$HOME/.local/share/applications/$LEGACY_ID.desktop"
+    rm -f "$HOME/.local/share/locale/zh_CN/LC_MESSAGES/plasma_applet_$LEGACY_ID.mo"
+    echo "   已卸载旧插件并清理旧桌面入口"
+else
+    echo "   无需迁移（未安装旧 ID）"
+fi
+
+echo
 echo "== 3) 安装 Plasma 插件（用户级，无需 root）=="
 NEW_HASH="$(plasmoid_hash)"
 OLD_HASH=""
 [ -r "$HASHFILE" ] && OLD_HASH="$(cat "$HASHFILE" 2>/dev/null)"
 NEED_RESTART=yes
 
-if [ "$NEW_HASH" = "$OLD_HASH" ] && kpackagetool6 -t Plasma/Applet -l 2>/dev/null | grep -qx 'org.kde.hotspot'; then
+if [ "$NEW_HASH" = "$OLD_HASH" ] && kpackagetool6 -t Plasma/Applet -l 2>/dev/null | grep -qx 'io.github.helloydh007.hotspot'; then
     echo "   插件内容与上次安装一致 → 跳过重装（界面无需刷新）"
     NEED_RESTART=no
 else
-    if kpackagetool6 -t Plasma/Applet -l 2>/dev/null | grep -qx 'org.kde.hotspot'; then
+    if kpackagetool6 -t Plasma/Applet -l 2>/dev/null | grep -qx 'io.github.helloydh007.hotspot'; then
         kpackagetool6 -t Plasma/Applet -u "$SRC/plasmoid"
     else
         kpackagetool6 -t Plasma/Applet -i "$SRC/plasmoid"
@@ -61,7 +83,7 @@ fi
 
 echo
 echo "== 4) 安装桌面入口 =="
-install -m 644 "$SRC/backend/org.kde.hotspot.desktop" "$HOME/.local/share/applications/"
+install -m 644 "$SRC/backend/io.github.helloydh007.hotspot.desktop" "$HOME/.local/share/applications/"
 kbuildsycoca6 --noincremental >/dev/null 2>&1 || true
 
 echo

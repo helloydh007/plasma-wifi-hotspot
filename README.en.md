@@ -106,7 +106,7 @@ Action commands print one JSON line (`{"ok":true,"message":"…"}`) on stdout �
 
 ## Uninstall
 
-See the Chinese README (卸载) for the full script; in short: remove the widget from the tray first (right-click → Remove), then stop/disable the three `kde-hotspot*` systemd units, remove the backend files (`/usr/local/sbin/kde-hotspot-ctl`, `/usr/local/sbin/kde-hotspot.sh`, the units, the polkit policy + rule, the NetworkManager `conf.d` file, `/etc/kde-hotspot`, `/var/lib/kde-hotspot`), clean up the `ap0` interface and the `kde-hotspot-normal` NM profile if present, then `kpackagetool6 -t Plasma/Applet -r org.kde.hotspot` and remove `~/.local/share/applications/org.kde.hotspot.desktop`. Removing the tray widget first means no plasmashell restart is needed (a restart would reset in-memory applet states such as the battery applet's caffeine toggle).
+See the Chinese README (卸载) for the full script; in short: remove the widget from the tray first (right-click → Remove), then stop/disable the three `kde-hotspot*` systemd units, remove the backend files (`/usr/local/sbin/kde-hotspot-ctl`, `/usr/local/sbin/kde-hotspot.sh`, the units, the polkit policy + rule, the NetworkManager `conf.d` file, `/etc/kde-hotspot`, `/var/lib/kde-hotspot`), clean up the `ap0` interface and the `kde-hotspot-normal` NM profile if present, then `kpackagetool6 -t Plasma/Applet -r io.github.helloydh007.hotspot` and remove `~/.local/share/applications/io.github.helloydh007.hotspot.desktop`. Removing the tray widget first means no plasmashell restart is needed (a restart would reset in-memory applet states such as the battery applet's caffeine toggle).
 
 ## Troubleshooting
 

@@ -113,7 +113,7 @@ PlasmoidItem {
         "/etc/kde-hotspot/dnsmasq.conf",
         "/etc/systemd/system/kde-hotspot.service",
         "/etc/systemd/system/kde-hotspot-dhcp.service",
-        "/usr/share/polkit-1/actions/org.kde.hotspotctl.policy",
+        "/usr/share/polkit-1/actions/io.github.helloydh007.hotspotctl.policy",
         "/etc/NetworkManager/conf.d/99-kde-hotspot-ap0.conf",
         "/usr/local/share/kde-hotspot/deploy.sh"
     ]
@@ -121,7 +121,7 @@ PlasmoidItem {
         + "; do if [ -e $p ]; then echo OK $p; else echo MISS $p; fi; done; "
         + "if [ -r /etc/kde-hotspot/config ]; then echo OK 配置可读(免特权状态); "
         + "else echo MISS 配置不可读-重跑 install.sh 授权; fi; "
-        + "if pkcheck --action-id org.kde.hotspotctl.run --process $$ >/dev/null 2>&1; "
+        + "if pkcheck --action-id io.github.helloydh007.hotspotctl.run --process $$ >/dev/null 2>&1; "
         + "then echo OK polkit-免密授权; else echo MISS polkit-免密授权; fi'"
 
     // ---------- 数据源 ----------

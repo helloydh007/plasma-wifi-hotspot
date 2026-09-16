@@ -131,8 +131,8 @@ bash install.sh --no-restart  # 从不重启（新界面在注销重登后生效
 安装脚本会在 `~/.local/share/applications/` 放一个桌面入口，三种打开方式：
 
 1. **应用菜单**：打开开始菜单，在"网络"分类里找 **Wi-Fi 热点控制**（KRunner 里按 Alt+Space 搜"热点"也行）
-2. 命令行：`gtk-launch org.kde.hotspot`
-3. 直接跑：`plasmawindowed org.kde.hotspot`
+2. 命令行：`gtk-launch io.github.helloydh007.hotspot`
+3. 直接跑：`plasmawindowed io.github.helloydh007.hotspot`
 
 打开的就是插件面板的独立窗口（和托盘弹出的是同一套界面）。想放到桌面或面板上做快捷方式：把这个 `.desktop` 文件复制到 `~/Desktop/` 或拖到面板即可。
 
@@ -165,10 +165,10 @@ pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> [<新密码>]
 | `backend/kde-hotspot-ctl` | **唯一的特权入口**：on/off/mode/autostart/set-credentials/status |
 | `backend/kde-hotspot.sh` | 并发模式监督循环：跟随 Wi-Fi 信道起停 hostapd；遵守"保持关闭"标记 |
 | `backend/kde-hotspot{,-dhcp,-normal}.service` | systemd 单元（后者是普通模式的开机自启） |
-| `backend/org.kde.hotspotctl.policy` + `49-kde-hotspot.rules` | polkit 动作与规则 |
+| `backend/io.github.helloydh007.hotspotctl.policy` + `49-kde-hotspot.rules` | polkit 动作与规则 |
 | `sync-backend.sh` | 把 `backend/` 同步进插件包（两处必须一致；改完 backend 记得跑一次） |
 | `backend/deploy.sh` | 部署后端（root）；插件包内也带一份（`plasmoid/contents/backend/`），供插件内"一键修复"使用 |
-| `backend/org.kde.hotspot.desktop` | 桌面入口（`plasmawindowed org.kde.hotspot`） |
+| `backend/io.github.helloydh007.hotspot.desktop` | 桌面入口（`plasmawindowed io.github.helloydh007.hotspot`） |
 
 ## 安全
 
@@ -202,7 +202,7 @@ sudo rm -f /etc/systemd/system/kde-hotspot.service \
            /etc/systemd/system/kde-hotspot-normal.service \
            /usr/local/sbin/kde-hotspot-ctl \
            /usr/local/sbin/kde-hotspot.sh \
-           /usr/share/polkit-1/actions/org.kde.hotspotctl.policy \
+           /usr/share/polkit-1/actions/io.github.helloydh007.hotspotctl.policy \
            /etc/polkit-1/rules.d/49-kde-hotspot.rules \
            /etc/NetworkManager/conf.d/99-kde-hotspot-ap0.conf
 sudo rm -rf /etc/kde-hotspot /var/lib/kde-hotspot /usr/local/share/kde-hotspot
@@ -215,8 +215,8 @@ nmcli connection delete kde-hotspot-normal 2>/dev/null || true
 # 4) 先从托盘移除小组件（右键托盘图标 → 移除，或“系统托盘设置 → 条目”里取消勾选），
 #    再卸载插件——这样不必重启 plasmashell（重启会复位电池小程序的“阻止睡眠/咖啡因”等
 #    只存在于内存里的开关）
-kpackagetool6 -t Plasma/Applet -r org.kde.hotspot
-rm -f ~/.local/share/applications/org.kde.hotspot.desktop
+kpackagetool6 -t Plasma/Applet -r io.github.helloydh007.hotspot
+rm -f ~/.local/share/applications/io.github.helloydh007.hotspot.desktop
 # 若已卸载但托盘仍残留失效图标，再执行：
 # systemctl --user restart plasma-plasmashell
 ```

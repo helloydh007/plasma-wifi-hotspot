@@ -7,11 +7,11 @@
 # 因此 .mo 文件名必须带 plasma_applet_ 前缀，否则 plasmashell 找不到目录。
 set -e
 cd "$(dirname "$0")"
-DOMAIN=plasma_applet_org.kde.hotspot
+DOMAIN=plasma_applet_io.github.helloydh007.hotspot
 
 xgettext --from-code=UTF-8 --language=JavaScript \
     --keyword=i18n --keyword=i18nc:1c,2 --keyword=i18np:1,2 --keyword=i18ncp:1c,2,3 \
-    -F -o po/org.kde.hotspot.pot plasmoid/contents/ui/*.qml
+    -F -o po/io.github.helloydh007.hotspot.pot plasmoid/contents/ui/*.qml
 
 for po in po/*.po; do
     lang=$(basename "$po" .po)

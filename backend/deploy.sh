@@ -17,11 +17,14 @@ install -m 755 "$SRC/kde-hotspot.sh"   /usr/local/sbin/kde-hotspot.sh
 install -m 644 "$SRC/kde-hotspot.service"        /etc/systemd/system/kde-hotspot.service
 install -m 644 "$SRC/kde-hotspot-dhcp.service"   /etc/systemd/system/kde-hotspot-dhcp.service
 install -m 644 "$SRC/kde-hotspot-normal.service" /etc/systemd/system/kde-hotspot-normal.service
-install -m 644 "$SRC/org.kde.hotspotctl.policy"  /usr/share/polkit-1/actions/org.kde.hotspotctl.policy
+install -m 644 "$SRC/io.github.helloydh007.hotspotctl.policy"  /usr/share/polkit-1/actions/io.github.helloydh007.hotspotctl.policy
 install -m 644 "$SRC/49-kde-hotspot.rules"       /etc/polkit-1/rules.d/49-kde-hotspot.rules
 chown root:polkitd /etc/polkit-1/rules.d/49-kde-hotspot.rules 2>/dev/null || true
+# 迁移：清掉旧命名空间（org.kde.hotspotctl）的 polkit 动作文件，
+# 否则 polkit 会看到两个定义同名动作的文件
+rm -f /usr/share/polkit-1/actions/org.kde.hotspotctl.policy
 ls -l /usr/local/sbin/kde-hotspot-ctl /usr/local/sbin/kde-hotspot.sh \
-      /usr/share/polkit-1/actions/org.kde.hotspotctl.policy \
+      /usr/share/polkit-1/actions/io.github.helloydh007.hotspotctl.policy \
       /etc/polkit-1/rules.d/49-kde-hotspot.rules \
       /etc/systemd/system/kde-hotspot*.service | awk '{print "  "$1" "$3":"$4" "$NF}'
 
