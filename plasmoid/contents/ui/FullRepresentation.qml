@@ -91,7 +91,8 @@ QQC2.ScrollView {
             QQC2.Label {
                 Layout.fillWidth: true
                 text: {
-                    if (!root.hotRunning) return root.isOff ? i18nc("The hotspot is switched off", "Off") : i18n("Standby (no beacon)")
+                    // 状态文案统一用 main.qml 的 stateText（那里才区分"待命"和"后端启动失败"）
+                    if (!root.hotRunning) return root.stateText
                     return root.hotspotSsid + "　" + (root.hotBand || "") + (root.hotCh ? " ch" + root.hotCh : "")
                         + (root.clients > 0 ? "　" + i18np("%1 device", "%1 devices", root.clients) : "")
                 }

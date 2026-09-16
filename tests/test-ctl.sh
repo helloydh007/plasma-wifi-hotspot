@@ -66,24 +66,49 @@ printf 'systemctl %s\n' "$*" >> "$MOCKLOG"
 S=$MOCKSTATE
 case "${1:-}" in
   is-active)
+     # 真实 systemd：单元处于"崩溃后自动重启中"(activating/auto-restart) 时
+     # is-active 也返回 0 —— 这正是"服务其实没起来、面板却报成功"的根源
      shift; [ "${1:-}" = "--quiet" ] && shift
-     for u in "$@"; do [ -e "$S/active.$u" ] || exit 3; done
+     for u in "$@"; do
+         if [ -e "$S/unitstate.$u" ]; then
+             case "$(cut -d: -f1 < "$S/unitstate.$u")" in
+                 activating|active) continue ;;
+                 *) exit 3 ;;
+             esac
+         fi
+         [ -e "$S/active.$u" ] || exit 3
+     done
      exit 0 ;;
   is-enabled)
      shift; [ "${1:-}" = "--quiet" ] && shift
      for u in "$@"; do [ -e "$S/enabled.$u" ] || exit 1; done
      exit 0 ;;
   show)
+     # systemctl show -p ActiveState -p SubState --value U1 U2...
      shift
+     props=""
      while [ "$#" -gt 0 ]; do
          case "$1" in
-             -p) shift; shift ;;
-             --value|-*) shift ;;
+             -p) shift; props="$props ${1:-}" ;;
+             --value|-*) ;;
              *) break ;;
          esac
+         shift
      done
      for u in "$@"; do
-         if [ -e "$S/active.$u" ]; then echo active; else echo inactive; fi
+         ast=inactive; sub=dead
+         if [ -e "$S/unitstate.$u" ]; then
+             IFS=: read -r ast sub < "$S/unitstate.$u"
+         elif [ -e "$S/active.$u" ]; then
+             ast=active; sub=running
+         fi
+         for pr in $props; do
+             case "$pr" in
+                 ActiveState) echo "$ast" ;;
+                 SubState) echo "$sub" ;;
+                 *) echo "" ;;
+             esac
+         done
      done
      exit 0 ;;
   start|restart)
@@ -459,6 +484,26 @@ cfg_set SSID my-hotspot
 run on
 is "示例占位 SSID 拒绝启动" "$(jget ok)" "false"
 contains "指出是占位值" "$(jget message)" "占位"
+
+section "H2. 服务在「崩溃-自动重启」循环里：必须报失败（实机故障回归）"
+reset
+# 真实 systemd 里这就是 Restart=on-failure 且脚本立刻退出的样子：
+# is-active 返回 0（activating），但根本没进入 running
+printf 'activating:auto-restart\n' > "$MOCKSTATE/unitstate.kde-hotspot.service"
+: > "$MOCKSTATE/active.kde-hotspot-dhcp.service"
+run on
+is "不报成功" "$(jget ok)" "false"
+contains "提示看 journalctl" "$(jget message)" "journalctl"
+contains "说清楚真实状态" "$(jget message)" "auto-restart"
+run_status
+is "status 里 concurrent_service_active 必须是 no（activating≠在跑）" "$(jget concurrent_service_active)" "no"
+is "status 带上真实状态串（面板据此区分待命与失败）" "$(jget concurrent_service_state)" "activating/auto-restart"
+# 对照：真正 active/running 时才算成功
+reset
+: > "$MOCKSTATE/active.kde-hotspot.service"
+: > "$MOCKSTATE/active.kde-hotspot-dhcp.service"
+run on
+is "真 active/running 才算成功" "$(jget ok)" "true"
 
 section "I. 普通模式 on：断开 Wi-Fi 并记下 UUID，off 时恢复"
 reset

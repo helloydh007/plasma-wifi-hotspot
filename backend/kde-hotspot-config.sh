@@ -210,6 +210,24 @@ hs_conf_get(){
 }
 
 # hs_conf_load：把白名单键加载成同名变量（等价于旧 `. config`，但不会执行内容）
+# 可选键的默认值：配置里**没写或写成空**时由库统一补上。
+#
+# 为什么放在库里而不是各调用方：2026-09-16 的实机故障就是"调用方自己补默认值"补漏了——
+# kde-hotspot.sh 在 hs_conf_load **之前**设了 RULE_PRIO=${RULE_PRIO:-8990}，而 load 会先把
+# 白名单键全部 unset 再只装文件里有的键，于是默认值被自己清掉，后面 "$RULE_PRIO" 在
+# `set -u` 下直接让脚本退出（87ms、exit 1）。默认值集中在库里，"键没写"就永远不会是坑。
+HS_KEY_DEFAULTS="AP_IF=ap0 AP_IP=10.233.33.1 MODE=concurrent FALLBACK_2G=yes RULE_PRIO=8990 NORMAL_CHANNEL=6 DHCP_START=50 DHCP_END=150 DHCP_DNS=223.5.5.5,119.29.29.29"
+
+# 给"没写或写成空"的白名单键补默认值。必须在 hs_conf_load 之后调用。
+hs_conf_apply_defaults(){
+    local kv k v
+    for kv in $HS_KEY_DEFAULTS; do
+        k=${kv%%=*}
+        v=${kv#*=}
+        [ -n "${!k:-}" ] || printf -v "$k" '%s' "$v"
+    done
+}
+
 # 先清空白名单键：配置是唯一数据源，残留的环境变量不能冒充配置（root 场景下的边界）
 HS_CONF_READABLE=no
 hs_conf_reset(){
@@ -221,7 +239,10 @@ hs_conf_load(){
     HS_CONF_READABLE=no
     hs_conf_reset
     f=$(hs_conf_path)
-    [ -r "$f" ] || return 1
+    if [ ! -r "$f" ]; then
+        hs_conf_apply_defaults      # 读不到也要给一套安全默认值
+        return 1
+    fi
     # shellcheck disable=SC2034  # 由调用方（kde-hotspot-ctl）读取
     HS_CONF_READABLE=yes
     while IFS= read -r line || [ -n "$line" ]; do
@@ -230,6 +251,7 @@ hs_conf_load(){
         hs_key_known "$k" || continue
         printf -v "$k" '%s' "$HS_PARSE_VALUE"
     done < "$f"
+    hs_conf_apply_defaults
     return 0
 }
 

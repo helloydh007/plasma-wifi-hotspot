@@ -205,6 +205,34 @@ hs_conf_load
 is "写回后的值可回读（load）" "final-ssid" "${SSID:-}"
 is "其它键不受影响" "first-pass-1234" "$(hs_conf_get PASS)"
 
+echo "== N) 可选键缺省时由库统一补默认值（否则 set -u 下引用会直接崩）=="
+# 实机故障复盘：kde-hotspot.sh 先设了 RULE_PRIO=${RULE_PRIO:-8990}，随后 hs_conf_load
+# 会把白名单键全部 unset 再只装文件里有的键 → 默认值被清掉 → 引用时"未绑定变量"。
+# 修法是把默认值收进库里：只要键没写（或写成空），load 之后一定是可用值。
+cat > "$KDE_HOTSPOT_CONF" <<'EOF'
+SSID=MyNet
+PASS=secret-pass-123
+MODE=concurrent
+STA_IF=wlan0
+EOF
+hs_conf_load
+is "RULE_PRIO 缺失 → 默认 8990" "8990" "${RULE_PRIO:-}"
+is "FALLBACK_2G 缺失 → 默认 yes" "yes" "${FALLBACK_2G:-}"
+is "NORMAL_CHANNEL 缺失 → 默认 6" "6" "${NORMAL_CHANNEL:-}"
+is "DHCP_START 缺失 → 默认 50" "50" "${DHCP_START:-}"
+is "DHCP_END 缺失 → 默认 150" "150" "${DHCP_END:-}"
+is "DHCP_DNS 缺失 → 默认值" "223.5.5.5,119.29.29.29" "${DHCP_DNS:-}"
+is "AP_IF 缺失 → 默认 ap0" "ap0" "${AP_IF:-}"
+is "AP_IP 缺失 → 默认 10.233.33.1" "10.233.33.1" "${AP_IP:-}"
+is "COUNTRY 缺失 → 空（不硬编任何国家）" "" "${COUNTRY:-}"
+cat > "$KDE_HOTSPOT_CONF" <<'EOF'
+SSID=MyNet
+PASS=secret-pass-123
+RULE_PRIO=
+EOF
+hs_conf_load
+is "写成空值也当没写（否则会拼出 priority \"\" 这种坏命令）" "8990" "${RULE_PRIO:-}"
+
 echo
 echo "配置库测试：$T_PASS 通过，$T_FAIL 失败"
 [ "$T_FAIL" -eq 0 ]

@@ -157,8 +157,22 @@ conn_name_of(){ $NMCLI -t -g NAME connection show "$1" 2>/dev/null; }
 normal_running(){
     $NMCLI -t -f NAME connection show --active 2>/dev/null | grep -qx "$NM_AP_CON" && echo yes || echo no
 }
-concurrent_running(){ systemctl is-active --quiet "$UNIT_MAIN" 2>/dev/null && echo yes || echo no; }
-dhcp_running(){ systemctl is-active --quiet "$UNIT_DHCP" 2>/dev/null && echo yes || echo no; }
+# 单元的真实状态：ActiveState/SubState。
+# 只看 `systemctl is-active` 会踩坑：Restart=on-failure 的服务在脚本崩溃后会被 systemd
+# 置为 activating/auto-restart，此时 is-active **仍然返回 0** —— 于是"服务其实已经死了"
+# 被判成"启动成功"（2026-09-16 实机故障：面板显示开启成功，热点完全不可用）。
+unit_states(){
+    systemctl show -p ActiveState -p SubState --value "${1:-}" 2>/dev/null
+}
+unit_running(){
+    local out ast sub
+    out=$(unit_states "${1:-}")
+    ast=${out%%$'\n'*}
+    sub=${out#*$'\n'}
+    [ "$ast" = active ] && [ "$sub" = running ]
+}
+concurrent_running(){ unit_running "$UNIT_MAIN" && echo yes || echo no; }
+dhcp_running(){ unit_running "$UNIT_DHCP" && echo yes || echo no; }
 autostart_state(){
     if [ "$MODE" = normal ]; then
         systemctl is-enabled --quiet "$UNIT_NORMAL" 2>/dev/null && echo on || echo off
@@ -383,16 +397,27 @@ do_on(){
         stop_normal
         sync_dnsmasq
         systemctl start "$UNIT_MAIN" "$UNIT_DHCP" >/dev/null 2>&1 || true
-        sleep 1
-        if ! systemctl is-active --quiet "$UNIT_MAIN"; then
-            log "并发模式服务启动失败，见 journalctl -u kde-hotspot"
-            result false "服务启动失败，见 journalctl -u kde-hotspot"
+        # 等主服务真正进入 active/running（最多 10 秒）。必须看 ActiveState/SubState：
+        # is-active 对"崩溃后正在自动重启"也返回 0，只看它会把失败报成成功。
+        local i=0 out="" ast="" sub=""
+        while [ "$i" -lt 10 ]; do
+            out=$(unit_states "$UNIT_MAIN")
+            ast=${out%%$'\n'*}
+            sub=${out#*$'\n'}
+            [ "$ast" = active ] && [ "$sub" = running ] && break
+            case "$ast" in failed|inactive) break ;; esac
+            sleep 1
+            i=$((i + 1))
+        done
+        if [ "$ast" != active ] || [ "$sub" != running ]; then
+            log "并发模式服务未进入运行状态（$ast/$sub），见 journalctl -u kde-hotspot"
+            result false "服务未能启动（状态 ${ast:-未知}/${sub:-未知}），见 journalctl -u kde-hotspot"
             return 1
         fi
         # DHCP 挂了客户端会拿不到 IP，但面板原来只检查主服务，会一直显示"运行中"（评审 §3.6-7）
-        if ! systemctl is-active --quiet "$UNIT_DHCP"; then
-            log "DHCP 服务启动失败（客户端会拿不到 IP），见 journalctl -u kde-hotspot-dhcp"
-            result false "热点已启动但 DHCP 服务失败（客户端拿不到 IP），见 journalctl -u kde-hotspot-dhcp"
+        if ! unit_running "$UNIT_DHCP"; then
+            log "DHCP 服务未进入运行状态，见 journalctl -u kde-hotspot-dhcp"
+            result false "热点已启动但 DHCP 服务未运行（客户端拿不到 IP），见 journalctl -u kde-hotspot-dhcp"
             return 1
         fi
         log "并发模式已开启（热点跟随 Wi-Fi 当前信道；固件不支持 5G 时自动回退 2.4GHz）"
@@ -607,11 +632,15 @@ do_status(){
     local ssid="" freq=""
     { read -r ssid; read -r freq; } <<< "$(read_iw_link "$STA_IF")"
 
-    # 服务状态：一次 systemctl show 拿两个单元，省一次进程创建
-    local svc_main="" svc_dhcp=""
-    { read -r svc_main; read -r svc_dhcp; } <<< "$(systemctl show -p ActiveState --value "$UNIT_MAIN" "$UNIT_DHCP" 2>/dev/null)"
-    local conc=no; [ "$svc_main" = active ] && conc=yes
-    local dhcp=no; [ "$svc_dhcp" = active ] && dhcp=yes
+    # 服务状态：一次 systemctl show 拿三个单元 × 两个属性（每单元 ActiveState、SubState），
+    # 省进程创建；判定必须同时看 ActiveState 与 SubState（见 unit_running 的注释）
+    local svc_main="" sub_main="" svc_dhcp="" sub_dhcp="" svc_norm="" sub_norm=""
+    { read -r svc_main; read -r sub_main; read -r svc_dhcp; read -r sub_dhcp; read -r svc_norm; read -r sub_norm; } <<< \
+        "$(systemctl show -p ActiveState -p SubState --value "$UNIT_MAIN" "$UNIT_DHCP" "$UNIT_NORMAL" 2>/dev/null)"
+    local conc=no
+    { [ "$svc_main" = active ] && [ "$sub_main" = running ]; } && conc=yes
+    local dhcp=no
+    { [ "$svc_dhcp" = active ] && [ "$sub_dhcp" = running ]; } && dhcp=yes
 
     local conn=no band=""
     if [ "$stype" = "AP" ]; then
@@ -655,7 +684,9 @@ do_status(){
     printf '  "hotspot": {"running": "%s", "mechanism": "%s", "ssid": "%s", "pass": "%s", "channel": "%s", "band": "%s", "gateway": "%s", "clients": %s, "fallback": %s, "dhcp_active": "%s"},\n' \
         "$hot" "$mech" "$(jstr "$SSID")" "$(jstr "$PASS")" "${hch:-}" "${hband:-}" "${gw:-}" "$clients" "$fb" "$dhcp"
     printf '  "concurrent_service_active": "%s",\n' "$conc"
-    printf '  "normal_service_active": "%s"\n' "$nmact"
+    printf '  "concurrent_service_state": "%s",\n' "${svc_main:-unknown}/${sub_main:-unknown}"
+    printf '  "normal_service_active": "%s",\n' "$nmact"
+    printf '  "normal_service_state": "%s"\n' "${svc_norm:-unknown}/${sub_norm:-unknown}"
     printf '}\n'
 }
 

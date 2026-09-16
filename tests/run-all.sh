@@ -16,7 +16,7 @@ bad(){ printf '  FAIL %s\n' "$1"; FAIL=1; }
 step "1) 语法检查（bash -n）"
 for f in install.sh sync-backend.sh build-translations.sh \
          backend/kde-hotspot-config.sh backend/kde-hotspot-ctl backend/kde-hotspot.sh backend/deploy.sh \
-         tests/test-config.sh tests/test-ctl.sh tests/run-all.sh; do
+         tests/test-config.sh tests/test-ctl.sh tests/test-supervisor.sh tests/run-all.sh; do
     if bash -n "$f" 2>/dev/null; then
         printf '  ok   %s\n' "$f"
     else
@@ -34,7 +34,7 @@ elif command -v shellcheck >/dev/null 2>&1; then
 fi
 if [ -n "$SC" ]; then
     if "$SC" backend/kde-hotspot-config.sh backend/kde-hotspot-ctl backend/kde-hotspot.sh \
-               backend/deploy.sh tests/test-config.sh tests/test-ctl.sh tests/run-all.sh \
+               backend/deploy.sh tests/test-config.sh tests/test-ctl.sh tests/test-supervisor.sh tests/run-all.sh \
                install.sh sync-backend.sh build-translations.sh; then
         echo "  ok   无告警"
     else
@@ -49,6 +49,9 @@ bash tests/test-config.sh || bad "配置库测试失败"
 
 step "4) 控制脚本测试（mock 端到端）"
 bash tests/test-ctl.sh || bad "控制脚本测试失败"
+
+step "4b) 监督脚本测试（mock 端到端）"
+bash tests/test-supervisor.sh || bad "监督脚本测试失败"
 
 step "5) backend 与插件包内副本一致性"
 bash sync-backend.sh --check || bad "两处后端不一致（运行 bash sync-backend.sh）"

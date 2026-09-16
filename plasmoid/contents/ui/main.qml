@@ -28,6 +28,13 @@ PlasmoidItem {
     readonly property bool isOff: st.disabled === true
     readonly property bool hotRunning: !!st.hotspot && st.hotspot.running === "yes"
     readonly property string mode: ready ? st.mode : "concurrent"
+    // 后端服务的真实状态串（ActiveState/SubState），由 ctl 的 status 给出。
+    // 不能只看"服务是不是 active"：Restart=on-failure 的服务在脚本崩溃后会处于
+    // activating/auto-restart，此时 systemctl is-active 依然返回 0 —— 面板若据此判断，
+    // 就会把"后端已经死了"显示成"已开启"（2026-09-16 实机故障）。
+    readonly property string backendState: (mode === "normal"
+        ? (st.normal_service_state || "") : (st.concurrent_service_state || ""))
+    readonly property bool backendAlive: backendState.indexOf("active/running") === 0
     readonly property string wifiSsid: (st.wifi && st.wifi.ssid) ? st.wifi.ssid : ""
     readonly property string wifiBand: (st.wifi && st.wifi.band) ? st.wifi.band : ""
     readonly property string wifiCh: (st.wifi && st.wifi.channel) ? String(st.wifi.channel) : ""
@@ -41,7 +48,12 @@ PlasmoidItem {
     // 5G 被固件拒绝、已自动回退 2.4G（监督脚本写入的状态标记）
     readonly property bool fallback: !!(st.hotspot && st.hotspot.fallback === true)
 
-    readonly property string stateText: !ready ? i18n("Backend unavailable") : (isOff ? i18nc("The hotspot is switched off", "Off") : (hotRunning ? i18n("Running") : i18nc("Wi-Fi not on 2.4GHz yet, hotspot not beaconing", "Standby")))
+    readonly property string stateText: !ready ? i18n("Backend unavailable")
+        : hotRunning ? i18n("Running")
+        : awaitingHotspot ? i18n("Starting hotspot…")
+        : isOff ? i18nc("The hotspot is switched off", "Off")
+        : backendAlive ? i18nc("Wi-Fi not on 2.4GHz yet, hotspot not beaconing", "Standby")
+        : i18n("Not running (the backend service failed)")
     readonly property string bandText: hotRunning
         ? ((hotBand || "2.4G") + (hotCh ? " ch" + hotCh : ""))
         : (wifiBand ? (wifiBand + (wifiCh ? " ch" + wifiCh : "")) : "")
@@ -88,7 +100,11 @@ PlasmoidItem {
     // 图标统一用热点图标；关闭/后端不可用时在右下角叠红色 ✕ 徽标
     // （不用 network-wireless-disconnected——那是"WiFi+叉"，容易和断网混淆）
     readonly property string baseIcon: "network-wireless-hotspot"
+    // 斜线 = "现在没有热点可用"。以前只看 isOff：点"开启"会立刻清掉 disabled 标记，
+    // 于是后端即使崩了图标也显示成已开启。现在只有"确实在发信标 / 正在启动 /
+    // 后端还活着在待命"这三种情况才不画斜线。
     readonly property bool offBadge: !ready || isOff
+        || (!hotRunning && !awaitingHotspot && !backendAlive)
     Plasmoid.icon: root.baseIcon
     Plasmoid.status: PlasmaCore.Types.ActiveStatus
     // 托盘里只显示图标，所以把频段/信道放进悬浮提示
