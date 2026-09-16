@@ -49,6 +49,67 @@
   关热点不动自启、切模式保留自启、陈旧标记）→ **128 项**。
 - 合计 **253 项**，`tests/run-all.sh` 一条命令跑完（含 shellcheck 与 qmllint）。
 
+
+### 1.1.1 之后的第二轮审计（4 个并行评审：安全 / shell 后端 / QML / 测试与文档）
+
+**已修（每条都先在真机上核实过，不是照单全收）**
+
+- **`kde-hotspot.sh` 的 `wiphy` 解析永远匹配不到**：真机 `iw dev <if> info` 输出是制表符缩进的
+  `\twiphy 0`，而代码用 `/^wiphy/` → 永远取不到 → 默默回落到 `phy0`。多射频机器上 `ap0` 会建到
+  错误的无线电（或直接失败、热点永远起不来）。改成 `$1=="wiphy"`，取不到就明确报错并写日志。
+- **`sta_channel` 会串到下一个接口**：旧 awk 不设接口边界，STA 段没有 `channel` 行（=未连接）时会
+  继续往下扫，把 `ap0` 的信道当成 STA 的 → "STA 离开信道 → 停热点重建"的逻辑永不触发，
+  留下一个**没有上行的僵尸热点**（客户端连得上、上不了网）。改成按 `Interface` 行划段。
+- **凭据长度按字符数而不是字节数校验，且两个调用方 locale 不同**：11 个汉字的 SSID 在面板
+  （UTF-8，算 11 字符）被放行，systemd 服务（C locale，算 33 字节）拒掉 → 热点永远起不来、
+  日志和面板都没有任何提示。`hs_cred_problem` 现在固定 `LC_ALL=C`（802.11 的长度上限本来就是字节），
+  并且监督脚本在凭据不合法时会**明确写日志**。
+- **`hs_conf_set` 号称原子其实不是**：`install` 会先 unlink 再创建（配置会短暂消失，并发 `status`
+  会读到"配置不可读"，中途崩溃丢 SSID/密码）。改成"临时文件上设好属主/权限 + 同目录 `mv`"，
+  并加了"400 次并发观察从未消失"的测试。`sync_dnsmasq` 同样改成先 chmod 再 `mv`。
+- **切模式会留下 Wi-Fi 副作用**：`concurrent → normal` 不复位频段（Wi-Fi 被钉在 2.4GHz）、
+  `normal → concurrent` 不把断开的 Wi-Fi 接回来。`do_mode` 现在会还原上一套机制的改动。
+- **`restore_band` 先删备份再恢复、且无条件打印"已恢复"**：失败时用户被永久钉在 2.4GHz 且恢复数据已丢。
+  现在确认成功才删备份，失败保留并如实记录。
+- **`--pass-file` 的检查-使用竞态**：按路径 stat 之后再按路径 `cat`，调用者可在两步之间换成符号链接
+  （例如指向 `/dev/zero` 让 root 无界读取）。现在**只打开一次**，之后所有属性检查（`/proc/self/fd`）
+  与读取都针对同一个 fd，并限制最多读 4KiB；`/proc`、`/sys` 前缀直接拒绝。
+- **不再接受命令行形式的密码**：`set-credentials SSID PASS` 会把密码暴露在 `pkexec` 的 argv
+  （`/proc/<pid>/cmdline` 同机可读）。现在只接受 `--pass-file` 或 `-`（stdin）。
+- **规则守卫的测试是假的**：iptables mock 让 `-C` 恒为真/恒为假，于是"每 ~15 秒重复插入 NAT/FORWARD"
+  这类 bug（Docker 事故的修复点）在 CI 里看不出来。mock 改成**有状态**（记录/比对/删除真实规则），
+  新增"同一套规则只插入一次"与"cleanup 真的拆干净"的断言。
+- **`sync-helpers` / dnsmasq 渲染完全没测过**：`DNSMASQ_CONF` 提到顶层可注入，新增 8 条断言
+  （接口/地址池/网关/DNS/bind-dynamic/644/内容没变不重启/变了才重启）。
+- **QML 语法检查是一道空门**：CI 里 `qmllint` 根本不在 PATH（`command not found`）却打印 "QML 语法 OK"，
+  而且判定 grep 文案（换个报错文案就永远通过）。现在：本地与 CI 都**用退出码**判定、CI 明确把
+  `/usr/lib/qt6/bin` 加进 PATH、找不到 qmllint 直接失败，并各自带一个"故意写坏的文件必须失败"的自检。
+- **QML：`status` 失败时不清空状态** → 后端被删/改名后面板永远显示最后一次成功的"运行中"。
+  现在 stdout 为空即清空状态（`ready=false` → "后端不可用"）。
+- **QML：动作源名重复** → executable 引擎对用过的源名会回放缓存、不重新执行，连点两次"开启"第二次可能无效。
+  源名现在带自增序号。另加**动作看门狗**（60 秒）：pkexec 卡住时不再永久 `busy`。
+- **QML：托盘文字与图标判定不一致**（图标画斜线、文字却显示频段）→ 统一按 `phase`。
+- **`install.sh` 只重启"本来就在跑"的单元**（以前会把用户关着的热点拉起来）；
+  `deploy.sh` 在取不到调用者信息时**不再猜组**（保持 600）；`KDE_HOTSPOT_CONF` 在 root 下需显式放行
+  （deploy 自己放行），堵住"继承一个环境变量就让 root 改写任意文件"的口子。
+- **status JSON 的所有字段统一走 `jstr`**，`clients` 只保留数字。
+
+**经核实后不采纳 / 暂缓（含理由）**
+
+- **"配置文件 640 给 netdev 可读 = 泄密"**：可读组与 polkit 授权组是同一批人，`status` 本来就把密码交给他们；
+  改成为不给组读而让面板每次 `pkexec` 取密码反而更危险（每次 fork root）。
+- **"root 脚本应固定 `PATH`"**：两个入口本身已经净化 PATH（pkexec 硬编 `/usr/sbin:/usr/bin:/sbin:/bin`，
+  systemd 单元用默认 PATH），且固定 PATH 会破坏测试用的 mock 注入；判定为已覆盖，不改。
+- **普通模式 PSK 出现在 `nmcli` argv**：真实存在（任一本地用户可读 `/proc/<pid>/cmdline`），
+  但修复要改成 NM keyfile 导入 + 删除临时文件，属于行为变更、需要真机验证；已在 README「已知限制」写明，暂缓。
+- **后端消息仍是中文 / config.qml 的 "General" 未被 xgettext 提取 / `cleanup`、`sync-helpers` 不输出 JSON**：
+  都是接口或抽取范围的改动，已在 README「已知限制」记录，本轮不做。
+- **`sta_channel` 之外的 `iw dev` 解析、hostapd 日志启发式**：mock 无法证伪真机 hostapd 的报错文案，
+  已在测试注释里标注为"只能靠真机回归"。
+
+**测试规模**：配置库 85 + 控制脚本 152 + 监督脚本 55 = **292 项**（本轮 +39），
+另含 shellcheck、QML 语法（活门）、backend↔包内副本一致性。
+
 ## 1.1.0
 
 按三份代码评审报告（DeepSeek / GPT / Qwen）逐条核对后的修复版本。

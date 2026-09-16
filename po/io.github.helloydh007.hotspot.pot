@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-16 20:28+0800\n"
+"POT-Creation-Date: 2026-09-16 21:24+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -48,7 +48,7 @@ msgid "Hotspot"
 msgstr ""
 
 #: plasmoid/contents/ui/FullRepresentation.qml:97
-#: plasmoid/contents/ui/main.qml:114
+#: plasmoid/contents/ui/main.qml:125
 msgid "%1 device"
 msgid_plural "%1 devices"
 msgstr[0] ""
@@ -103,7 +103,7 @@ msgid "Running…"
 msgstr ""
 
 #: plasmoid/contents/ui/FullRepresentation.qml:176
-#: plasmoid/contents/ui/main.qml:53
+#: plasmoid/contents/ui/main.qml:63
 msgid "Starting hotspot…"
 msgstr ""
 
@@ -214,103 +214,107 @@ msgid ""
 "disconnects Wi-Fi and uses the whole NIC as the hotspot."
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:51
+#: plasmoid/contents/ui/main.qml:61
 msgid "Backend unavailable"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:52
+#: plasmoid/contents/ui/main.qml:62
 msgid "Running"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:54
-msgctxt "The hotspot is switched off"
-msgid "Off"
+#: plasmoid/contents/ui/main.qml:64
+msgid "Not running (the backend service failed)"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:55
+#: plasmoid/contents/ui/main.qml:65
 msgctxt "Wi-Fi not on 2.4GHz yet, hotspot not beaconing"
 msgid "Standby"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:56
-msgid "Not running (the backend service failed)"
+#: plasmoid/contents/ui/main.qml:66
+msgctxt "The hotspot is switched off"
+msgid "Off"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:60
+#: plasmoid/contents/ui/main.qml:72
 msgctxt "Short tray label"
 msgid "Off"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:111
+#: plasmoid/contents/ui/main.qml:122
 msgid "Wi-Fi hotspot: %1"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:113
+#: plasmoid/contents/ui/main.qml:124
 msgid "Hotspot %1 %2 ch%3"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:115
+#: plasmoid/contents/ui/main.qml:126
 msgid "(2.4GHz fallback)"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:116
+#: plasmoid/contents/ui/main.qml:127
 msgid "(DHCP unavailable)"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:118
+#: plasmoid/contents/ui/main.qml:129
 msgid "Normal mode: enabling will disconnect Wi-Fi"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:119
+#: plasmoid/contents/ui/main.qml:130
 msgid "Wi-Fi %1 %2 ch%3"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:119
+#: plasmoid/contents/ui/main.qml:130
 msgid "Wi-Fi not connected"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:182
+#: plasmoid/contents/ui/main.qml:198
 msgid "Hotspot is up: %1  %2"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:199
+#: plasmoid/contents/ui/main.qml:216
+msgid "The command timed out — was the authorization dialog dismissed?"
+msgstr ""
+
+#: plasmoid/contents/ui/main.qml:228
 msgid "Hotspot did not come up within %1 s — check journalctl -u kde-hotspot"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:222
+#: plasmoid/contents/ui/main.qml:252
 msgid "Done"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:222
+#: plasmoid/contents/ui/main.qml:252
 msgid "see journalctl -u kde-hotspot"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:224 plasmoid/contents/ui/main.qml:275
-#: plasmoid/contents/ui/main.qml:282 plasmoid/contents/ui/main.qml:336
-#: plasmoid/contents/ui/main.qml:337 plasmoid/contents/ui/main.qml:339
+#: plasmoid/contents/ui/main.qml:254 plasmoid/contents/ui/main.qml:305
+#: plasmoid/contents/ui/main.qml:312 plasmoid/contents/ui/main.qml:370
+#: plasmoid/contents/ui/main.qml:371 plasmoid/contents/ui/main.qml:373
 msgid "Failed: %1"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:237
+#: plasmoid/contents/ui/main.qml:267
 msgid "Turn-on accepted — waiting for the hotspot to beacon…"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:275 plasmoid/contents/ui/main.qml:282
+#: plasmoid/contents/ui/main.qml:305 plasmoid/contents/ui/main.qml:312
 msgid "could not stage the password file"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:318 plasmoid/contents/ui/main.qml:354
+#: plasmoid/contents/ui/main.qml:349 plasmoid/contents/ui/main.qml:388
 msgid "Running: %1"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:336
+#: plasmoid/contents/ui/main.qml:370
 msgid "Hotspot name cannot be empty"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:337
+#: plasmoid/contents/ui/main.qml:371
 msgid "Hotspot name must be at most 32 characters"
 msgstr ""
 
-#: plasmoid/contents/ui/main.qml:339
+#: plasmoid/contents/ui/main.qml:373
 msgid "Password must be 8-63 characters"
 msgstr ""

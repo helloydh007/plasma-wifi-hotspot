@@ -32,23 +32,32 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: 安装 qmllint（失败则跳过本 job 的检查）
-        id: qml
-        continue-on-error: true
+      - name: 安装 qmllint
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y qt6-declarative-dev-tools
 
       - name: QML 语法检查
-        if: steps.qml.outcome == 'success'
         run: |
-          out=$(qmllint plasmoid/contents/ui/*.qml 2>&1 || true)
-          printf '%s\n' "$out" | head -60
-          # CI 里没有 Plasma 的 QML 模块，import 解析不了会有大量
-          # “Property does not exist / Unqualified access” 噪音警告，不算失败；
-          # 但只要出现语法错误就必须拦下来。
-          if printf '%s\n' "$out" | grep -qi 'Syntax error'; then
+          # Ubuntu 的 qt6-declarative-dev-tools 把 qmllint 放在 /usr/lib/qt6/bin（不在 PATH 里）。
+          # 旧版 CI 因此每次都 "qmllint: command not found" 却打印 "QML 语法 OK" —— 一道空门。
+          export PATH="$PATH:/usr/lib/qt6/bin"
+          if ! command -v qmllint >/dev/null 2>&1; then
+            echo "::error::CI 里找不到 qmllint：请不要静默跳过，要么修环境，要么删掉这一步"
+            exit 1
+          fi
+          qmllint --version
+          # 只看语法（CI 没有 Plasma 的 QML 模块，import 解析不了会有大量噪音警告）。
+          # 用退出码判断，不 grep 文案（文案会变）。
+          if ! qmllint --bare plasmoid/contents/ui/*.qml; then
             echo "::error::QML 有语法错误"
             exit 1
           fi
-          echo "QML 语法 OK（import 相关的警告已忽略）"
+          # 自检：故意写坏的文件必须被判失败，证明这道门是活的
+          bad=$(mktemp --suffix=.qml)
+          cat plasmoid/contents/ui/main.qml > "$bad"; printf '\nItem { property int x: }\n' >> "$bad"
+          if qmllint --bare "$bad" >/dev/null 2>&1; then
+            echo "::error::QML 自检失败：写坏的文件竟然通过了"
+            exit 1
+          fi
+          echo "QML 语法 OK（import 相关警告已忽略；自检通过）"

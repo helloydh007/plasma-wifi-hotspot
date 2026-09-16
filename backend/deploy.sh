@@ -69,9 +69,10 @@ if [ ! -e "$CONF" ]; then
     tmpconf=$(mktemp) || exit 1
     cp "$SRC/config.example" "$tmpconf"
     KDE_HOTSPOT_CONF=$tmpconf
-    export KDE_HOTSPOT_CONF
+    KDE_HOTSPOT_CONF_ALLOW=1      # 显式放行：这里是有意指向临时配置文件
+    export KDE_HOTSPOT_CONF KDE_HOTSPOT_CONF_ALLOW
     hs_conf_set SSID "$GEN_SSID" PASS "$GEN_PASS"
-    unset KDE_HOTSPOT_CONF
+    unset KDE_HOTSPOT_CONF KDE_HOTSPOT_CONF_ALLOW
     install -m 640 -o root -g root "$tmpconf" "$CONF"
     rm -f "$tmpconf"
     GEN_CREDS=1
@@ -99,12 +100,15 @@ INVOKER_GROUPS=""
 if [ "$INVOKER_UID" != "0" ]; then
     INVOKER_GROUPS=$(id -nG "$INVOKER_UID" 2>/dev/null || true)
 fi
-for g in netdev sudo wheel; do
-    if [ -n "$INVOKER_GROUPS" ]; then
-        case " $INVOKER_GROUPS " in *" $g "*) ;; *) continue ;; esac
-    fi
-    if getent group "$g" >/dev/null 2>&1; then CONF_GROUP="$g"; break; fi
-done
+# 只挑"调用者确实属于"的组：以前在取不到调用者信息（例如直接 sudo 跑、PKEXEC_UID 未设）
+# 时会退化成"第一个存在的组"，等于替用户把配置读权限给了一个他没选的组
+if [ -n "$INVOKER_GROUPS" ]; then
+    for g in netdev sudo wheel; do
+        case " $INVOKER_GROUPS " in
+            *" $g "*) getent group "$g" >/dev/null 2>&1 && { CONF_GROUP="$g"; break; } ;;
+        esac
+    done
+fi
 if [ -n "$CONF_GROUP" ]; then
     echo "$CONF_GROUP" > /var/lib/kde-hotspot/conf.group
     chgrp "$CONF_GROUP" "$CONF" 2>/dev/null || true
@@ -141,7 +145,13 @@ echo "== 4d) 按 config 生成 dnsmasq.conf（DHCP/DNS 与 config 保持一致�
 find /etc/kde-hotspot/dnsmasq.conf -maxdepth 0 -printf '  %M %u:%g %p\n' 2>/dev/null || true
 
 echo "== 5) 让并发模式服务读到新脚本 =="
-systemctl restart kde-hotspot.service kde-hotspot-dhcp.service 2>/dev/null || true
+# 只重启"本来就在跑"的单元：不要因为一次部署把用户关着的热点拉起来
+for _u in kde-hotspot.service kde-hotspot-dhcp.service; do
+    if systemctl is-active --quiet "$_u" 2>/dev/null; then
+        systemctl restart "$_u" 2>/dev/null || true
+        echo "  已重启 $_u（原本就在运行）"
+    fi
+done
 systemctl is-active kde-hotspot.service kde-hotspot-dhcp.service | tr '\n' ' '; echo
 
 echo "== 6) 状态 =="

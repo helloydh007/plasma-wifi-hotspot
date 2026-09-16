@@ -67,7 +67,10 @@ PlasmoidItem {
     readonly property string bandText: hotRunning
         ? ((hotBand || "2.4G") + (hotCh ? " ch" + hotCh : ""))
         : (wifiBand ? (wifiBand + (wifiCh ? " ch" + wifiCh : "")) : "")
-    readonly property string labelText: isOff ? i18nc("Short tray label", "Off") : ((mode === "normal" ? "AP " : "") + bandText)
+    // 用 phase 而不是 isOff：否则会出现"图标画了关闭斜线、文字却在显示频段"的自相矛盾
+    readonly property string labelText: (phase === "off" || phase === "unavailable" || phase === "failed")
+        ? i18nc("Short tray label", "Off")
+        : ((mode === "normal" ? "AP " : "") + bandText)
 
     readonly property var missingDeps: deps.filter(function (d) { return !d.ok })
     readonly property var missingPkgs: {
@@ -181,6 +184,11 @@ PlasmoidItem {
             if (data.stdout && data.stdout.length > 0) {
                 try { root.st = JSON.parse(data.stdout) }
                 catch (e) { root.st = ({}) }
+            } else {
+                // status 失败（后端被删/改名、权限问题、引擎出错…）必须清空状态：
+                // 旧实现只在 stdout 非空时赋值，于是面板会一直显示最后一次成功的状态
+                // （"运行中"、没有斜线），而实际上后端早就没了
+                root.st = ({})
             }
             // 热点真正发出信标了 → 结束"开启中"状态
             if (root.awaitingHotspot && root.hotRunning) {
@@ -193,6 +201,19 @@ PlasmoidItem {
             if (sourceName !== root.statusCmd) {
                 Qt.callLater(() => { statusSource.disconnectSource(sourceName) })
             }
+        }
+    }
+
+    // 动作看门狗：pkexec 卡住（授权框没人应答等）时不能永远停在 busy，
+    // 否则开关和所有控件会永久禁用、用户没有任何出路
+    Timer {
+        id: actionWatchdog
+        interval: 60000
+        repeat: false
+        onTriggered: {
+            if (!root.busy) { return }
+            root.busy = false
+            root.message = i18n("The command timed out — was the authorization dialog dismissed?")
         }
     }
 
@@ -214,6 +235,7 @@ PlasmoidItem {
         connectedSources: []
         onNewData: (sourceName, data) => {
             root.busy = false
+            actionWatchdog.stop()
             // 优先解析控制脚本输出的一行 JSON（{ok,message}）。
             // 不依赖 exitCode 的类型——executable 引擎里它可能是字符串 "0"
             var ok = (data.exitCode === 0 || data.exitCode === "0")
@@ -322,9 +344,13 @@ PlasmoidItem {
         // "开启中"期间只放行"关闭"——否则用户要等满 90 秒超时才能取消
         if (root.awaitingHotspot && args !== "off") { return }
         root.busy = true
+        actionWatchdog.restart()
         root.lastAction = args
         root.message = i18n("Running: %1", args)
-        actionSource.connectSource("pkexec " + root.ctl + " " + args)
+        // 源名必须每次唯一：executable 引擎对"用过的源名"会直接回放缓存结果、
+        // 不再重新执行（§main.qml 上面注释），连点两次"开启"就会第二次无效。
+        // 结尾的 "#aN" 是 shell 注释，不影响参数，只用来把源名变唯一。
+        actionSource.connectSource("pkexec " + root.ctl + " " + args + " #a" + (++root.oneShotSeq))
     }
     function toggleHotspot() {
         // “开启中”期间按钮的语义是取消：必须显式发 off。

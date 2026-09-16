@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.helloydh007.hotspot 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-16 20:28+0800\n"
+"POT-Creation-Date: 2026-09-16 21:22+0800\n"
 "PO-Revision-Date: 2026-09-15 20:30+0800\n"
 "Last-Translator: helloydh007\n"
 "Language-Team: zh_CN\n"
@@ -46,7 +46,7 @@ msgid "Hotspot"
 msgstr "热点"
 
 #: plasmoid/contents/ui/FullRepresentation.qml:97
-#: plasmoid/contents/ui/main.qml:114
+#: plasmoid/contents/ui/main.qml:125
 msgid "%1 device"
 msgid_plural "%1 devices"
 msgstr[0] "%1 台设备"
@@ -108,7 +108,7 @@ msgid "Running…"
 msgstr "执行中…"
 
 #: plasmoid/contents/ui/FullRepresentation.qml:176
-#: plasmoid/contents/ui/main.qml:53
+#: plasmoid/contents/ui/main.qml:63
 msgid "Starting hotspot…"
 msgstr "正在开启热点…"
 
@@ -215,113 +215,116 @@ msgid "Status refresh interval (seconds)"
 msgstr "状态刷新间隔（秒）"
 
 #: plasmoid/contents/ui/configGeneral.qml:23
-#, fuzzy
 msgid ""
 "Tip: concurrent mode keeps Wi-Fi connected (the hotspot follows the Wi-Fi "
 "channel; it falls back to 2.4GHz if the hardware refuses 5GHz); normal mode "
 "disconnects Wi-Fi and uses the whole NIC as the hotspot."
-msgstr ""
+msgstr "提示：并发模式保持 Wi-Fi 连接（热点跟随 Wi-Fi 信道；硬件拒绝 5GHz 时自动回退 2.4GHz）；普通模式断开 Wi-Fi，整块网卡做热点。"
 "提示：并发模式保持 Wi-Fi 连接（热点在 2.4GHz 同信道）；普通模式会断开 Wi-Fi，"
 "把网卡整体当热点用。"
 
-#: plasmoid/contents/ui/main.qml:51
+#: plasmoid/contents/ui/main.qml:61
 msgid "Backend unavailable"
 msgstr "后端不可用"
 
-#: plasmoid/contents/ui/main.qml:52
+#: plasmoid/contents/ui/main.qml:62
 msgid "Running"
 msgstr "运行中"
 
-#: plasmoid/contents/ui/main.qml:54
-msgctxt "The hotspot is switched off"
-msgid "Off"
-msgstr "已关闭"
+#: plasmoid/contents/ui/main.qml:64
+msgid "Not running (the backend service failed)"
+msgstr "未运行（后端服务启动失败）"
 
-#: plasmoid/contents/ui/main.qml:55
+#: plasmoid/contents/ui/main.qml:65
 msgctxt "Wi-Fi not on 2.4GHz yet, hotspot not beaconing"
 msgid "Standby"
 msgstr "待命"
 
-#: plasmoid/contents/ui/main.qml:56
-msgid "Not running (the backend service failed)"
-msgstr "未运行（后端服务启动失败）"
+#: plasmoid/contents/ui/main.qml:66
+msgctxt "The hotspot is switched off"
+msgid "Off"
+msgstr "已关闭"
 
-#: plasmoid/contents/ui/main.qml:60
+#: plasmoid/contents/ui/main.qml:72
 msgctxt "Short tray label"
 msgid "Off"
 msgstr "关"
 
-#: plasmoid/contents/ui/main.qml:111
+#: plasmoid/contents/ui/main.qml:122
 msgid "Wi-Fi hotspot: %1"
 msgstr "Wi-Fi 热点：%1"
 
-#: plasmoid/contents/ui/main.qml:113
+#: plasmoid/contents/ui/main.qml:124
 msgid "Hotspot %1 %2 ch%3"
 msgstr "热点 %1 %2 ch%3"
 
-#: plasmoid/contents/ui/main.qml:115
+#: plasmoid/contents/ui/main.qml:126
 msgid "(2.4GHz fallback)"
 msgstr "（已回退 2.4GHz）"
 
-#: plasmoid/contents/ui/main.qml:116
+#: plasmoid/contents/ui/main.qml:127
 msgid "(DHCP unavailable)"
 msgstr "（DHCP 未运行）"
 
-#: plasmoid/contents/ui/main.qml:118
+#: plasmoid/contents/ui/main.qml:129
 msgid "Normal mode: enabling will disconnect Wi-Fi"
 msgstr "普通模式：开启会断开 Wi-Fi"
 
-#: plasmoid/contents/ui/main.qml:119
+#: plasmoid/contents/ui/main.qml:130
 msgid "Wi-Fi %1 %2 ch%3"
 msgstr "Wi-Fi %1 %2 ch%3"
 
-#: plasmoid/contents/ui/main.qml:119
+#: plasmoid/contents/ui/main.qml:130
 msgid "Wi-Fi not connected"
 msgstr "Wi-Fi 未连接"
 
-#: plasmoid/contents/ui/main.qml:182
+#: plasmoid/contents/ui/main.qml:198
 msgid "Hotspot is up: %1  %2"
 msgstr "热点已开启：%1  %2"
 
-#: plasmoid/contents/ui/main.qml:199
+#: plasmoid/contents/ui/main.qml:216
+msgid "The command timed out — was the authorization dialog dismissed?"
+msgstr "命令超时 —— 是不是授权框没确认？"
+
+#: plasmoid/contents/ui/main.qml:228
 msgid "Hotspot did not come up within %1 s — check journalctl -u kde-hotspot"
 msgstr "热点在 %1 秒内未就绪 — 请查看 journalctl -u kde-hotspot"
 
-#: plasmoid/contents/ui/main.qml:222
+#: plasmoid/contents/ui/main.qml:252
 msgid "Done"
 msgstr "已完成"
 
-#: plasmoid/contents/ui/main.qml:222
+#: plasmoid/contents/ui/main.qml:252
 msgid "see journalctl -u kde-hotspot"
 msgstr "见 journalctl -u kde-hotspot"
 
-#: plasmoid/contents/ui/main.qml:224 plasmoid/contents/ui/main.qml:275
-#: plasmoid/contents/ui/main.qml:282 plasmoid/contents/ui/main.qml:336
-#: plasmoid/contents/ui/main.qml:337 plasmoid/contents/ui/main.qml:339
+#: plasmoid/contents/ui/main.qml:254 plasmoid/contents/ui/main.qml:305
+#: plasmoid/contents/ui/main.qml:312 plasmoid/contents/ui/main.qml:370
+#: plasmoid/contents/ui/main.qml:371 plasmoid/contents/ui/main.qml:373
 msgid "Failed: %1"
 msgstr "失败：%1"
 
-#: plasmoid/contents/ui/main.qml:237
+#: plasmoid/contents/ui/main.qml:267
 msgid "Turn-on accepted — waiting for the hotspot to beacon…"
 msgstr "开启指令已受理，正在等待热点发出信标…"
 
-#: plasmoid/contents/ui/main.qml:275 plasmoid/contents/ui/main.qml:282
+#: plasmoid/contents/ui/main.qml:305 plasmoid/contents/ui/main.qml:312
 msgid "could not stage the password file"
 msgstr "无法写入临时密码文件"
 
-#: plasmoid/contents/ui/main.qml:318 plasmoid/contents/ui/main.qml:354
+#: plasmoid/contents/ui/main.qml:349 plasmoid/contents/ui/main.qml:388
 msgid "Running: %1"
 msgstr "执行中：%1"
 
-#: plasmoid/contents/ui/main.qml:336
+#: plasmoid/contents/ui/main.qml:370
 msgid "Hotspot name cannot be empty"
 msgstr "热点名称不能为空"
 
-#: plasmoid/contents/ui/main.qml:337
+#: plasmoid/contents/ui/main.qml:371
 msgid "Hotspot name must be at most 32 characters"
 msgstr "热点名称最长 32 个字符"
 
-#: plasmoid/contents/ui/main.qml:339
+#: plasmoid/contents/ui/main.qml:373
 msgid "Password must be 8-63 characters"
 msgstr "密码长度需 8-63 位"
 

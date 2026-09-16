@@ -79,7 +79,9 @@ case "${1:-}" in
                 printf 'Interface %s\n\twiphy 0\n\tchannel %s\n' "$2" "$(cat "$S/ap.channel")"
             exit 0
         fi
-        printf 'Interface %s\n\twiphy 0\n' "$2"; exit 0 ;;
+        # 真机 `iw dev <if> info` 是制表符缩进的 "\twiphy N"：mock 必须一致，
+        # 否则 /^wiphy/ 这种错误解析在 mock 里看不出来
+        printf 'Interface %s\n\twiphy %s\n' "$2" "$(cat "$S/sta.phy" 2>/dev/null || echo 0)"; exit 0 ;;
       station)
         n=$(cat "$S/ap.stations" 2>/dev/null || echo 0)
         i=0
@@ -159,11 +161,29 @@ printf 'sysctl %s\n' "$*" >> "$MOCKLOG"
 exit 0
 EOF
 
-    # iptables：-C 一律回答"规则不在"，好让 -I 真正执行
+    # iptables：**有状态**地模拟规则表。
+    # 旧 mock 让 -C 恒为假，于是"重复插入"这种 bug（Docker 事故的修复点）在测试里看不出来。
     cat > "$BIN/iptables" <<'EOF'
 #!/bin/bash
 printf 'iptables %s\n' "$*" >> "$MOCKLOG"
-case "$*" in *" -C "*) exit 1 ;; esac
+S=$MOCKSTATE
+# 归一化：去掉动作词与 -I 的插入位置，使 -C / -I / -A / -D 能比对同一条规则。
+# 注意把参数串用空格包起来，否则"以动作词开头"的调用（iptables -C FORWARD ...）匹配不到，
+# 会一路落到最后的 exit 0，表现为"-C 永远说规则存在" → 重复插入的 bug 就测不出来。
+args=" $* "
+norm=$(printf '%s' "$args" | sed -E 's/ -(C|I|A|D) / /; s/ (FORWARD|INPUT|OUTPUT|PREROUTING|POSTROUTING) [0-9]+ / \1 /')
+rule=${norm# }
+rule=${rule% }
+case "$args" in
+  *" -C "*) grep -qxF -- "$rule" "$S/ipt.rules" 2>/dev/null && exit 0 || exit 1 ;;
+  *" -I "*|*" -A "*)
+      grep -qxF -- "$rule" "$S/ipt.rules" 2>/dev/null || printf '%s\n' "$rule" >> "$S/ipt.rules"
+      exit 0 ;;
+  *" -D "*)
+      grep -vxF -- "$rule" "$S/ipt.rules" > "$S/ipt.tmp" 2>/dev/null || true
+      mv -f "$S/ipt.tmp" "$S/ipt.rules" 2>/dev/null || true
+      exit 0 ;;
+esac
 exit 0
 EOF
 
@@ -267,10 +287,12 @@ reset(){
     : > "$MOCKLOG"
     : > "$CONF"
     : > "$MS/iprules"
+    : > "$MS/ipt.rules"
     printf 'wlan0:wifi:connected\n' > "$MS/nm.devices"
     printf 'uuid-home|HomeWifi|802-11-wireless|wlan0|yes\n' > "$MS/nm.conns"
     printf 'pg\n' > "$MS/band"
     printf '3\n' > "$MS/ap.stations"
+    printf '0\n' > "$MS/sta.phy"          # 默认 STA 在 phy0
     printf '6\n' > "$MS/sta.channel"      # 默认 STA 在 2.4G ch6
 }
 
@@ -347,6 +369,37 @@ cfg_base
 run_sup 3
 is "hostapd.conf 不写 country_code" "$(conf_line country_code)" ""
 contains "日志说明没取到监管域" "$(cat "$WORK/out.txt")" "未取到监管域"
+
+section "A3. ap0 必须建在 STA 所在的那块无线电上（wiphy 解析）"
+reset
+printf '1\n' > "$MS/sta.phy"             # STA 在 phy1
+cfg_base
+run_snap 3
+mock_has "iw phy phy1 interface add ap0 type __ap" \
+    && ok "按 STA 的 wiphy 建 ap0（phy1）" || no "按 STA 的 wiphy 建 ap0（phy1）" "$(grep 'interface add' "$MOCKLOG")"
+not_contains "不再默默用 phy0" "$(grep 'interface add' "$MOCKLOG")" "phy0 interface add"
+
+section "A4. STA 断开/换信道：监视循环必须停掉热点（旧写法会串到 ap0 的信道）"
+reset
+cfg_base
+PATH="$BIN:$PATH" KDE_HOTSPOT_CONF="$CONF" "$SUP" > "$WORK/out3.txt" 2>&1 &
+PID=$!; SUP_PID=$PID
+sleep 2
+is "先正常发上信标" "$(cat "$MS/ap.channel" 2>/dev/null)" "6"
+rm -f "$MS/sta.channel"                  # STA 掉线：其信息段不再有 channel 行
+sleep 4
+contains "日志说明 STA 离开信道" "$(cat "$WORK/out3.txt")" "STA 离开"
+is "ap0 信道被清（停止发信标）" "$(cat "$MS/ap.channel" 2>/dev/null || echo 无)" "无"
+mock_has "ip link set ap0 down" && ok "把 ap0 放倒" || no "把 ap0 放倒"
+stop_all
+
+section "A5. 规则守卫：同一套规则不许重复插入（Docker 事故修复点的回归）"
+reset
+cfg_base
+run_snap 5                       # 5 秒里 ensure_rules 会跑好几轮
+is "NAT MASQUERADE 只插入一次" "$(grep -c 'iptables -t nat -I POSTROUTING' "$MOCKLOG" 2>/dev/null || true)" "1"
+is "FORWARD 出向只插入一次" "$(grep -c 'iptables -I FORWARD 1 -i ap0 -o wlan0 -j ACCEPT' "$MOCKLOG" 2>/dev/null || true)" "1"
+is "策略路由也只加一次" "$(grep -c 'ip rule add' "$MOCKLOG" 2>/dev/null || true)" "1"
 
 section "B. 配置里显式写的值优先于默认值"
 reset

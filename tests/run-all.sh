@@ -59,6 +59,9 @@ bash sync-backend.sh --check || bad "两处后端不一致（运行 bash sync-ba
 step "6) QML 语法检查（qmllint，若可用）"
 QML=""
 QML_LD=""
+QMLTMP=$(mktemp)
+QMLTMP_BAD=$(mktemp --suffix=.qml)
+cp plasmoid/contents/ui/main.qml "$QMLTMP_BAD"
 if [ -x .tools/qml/qmllint ]; then
     QML="$PWD/.tools/qml/qmllint"
     QML_LD="$PWD/.tools/qml/lib"       # qmllint 需要 libQt6QmlCompiler
@@ -68,12 +71,20 @@ fi
 if [ -n "$QML" ]; then
     # 只看语法：CI 里没有 Plasma 的 QML 模块，import 解析不了会产生大量
     # “Property does not exist / Unqualified access” 之类的噪音警告，不算失败。
-    QMLOUT=$(LD_LIBRARY_PATH="$QML_LD" "$QML" plasmoid/contents/ui/*.qml 2>&1 || true)
-    if printf '%s\n' "$QMLOUT" | grep -qi 'Syntax error'; then
-        bad "QML 语法错误"
-        printf '%s\n' "$QMLOUT" | grep -i 'Syntax error'
-    else
+    # 用**退出码**判断（qmllint 的报错文案会变：Syntax error / Expected token …，
+    # 旧实现 grep "Syntax error"，换个文案就变成"永远通过"的空门）
+    if LD_LIBRARY_PATH="$QML_LD" "$QML" --bare plasmoid/contents/ui/*.qml >"$QMLTMP" 2>&1; then
         echo "  ok   无语法错误（未解析 import 的警告不计）"
+    else
+        bad "QML 语法错误"
+        grep -iE 'error|expected' "$QMLTMP" | head -5
+    fi
+    # 自检：故意写坏一个文件，检查必须**失败**——证明这道门是活的
+    printf '\nItem { property int x: }\n' >> "$QMLTMP_BAD"
+    if LD_LIBRARY_PATH="$QML_LD" "$QML" --bare "$QMLTMP_BAD" >/dev/null 2>&1; then
+        bad "QML 自检失败：故意写坏的 .qml 竟然通过了检查（这道门是空的）"
+    else
+        echo "  ok   自检：故意写坏的文件确实被判失败"
     fi
 else
     echo "  skip 未安装 qmllint"

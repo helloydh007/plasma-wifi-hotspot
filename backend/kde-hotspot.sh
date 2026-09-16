@@ -112,9 +112,14 @@ if [ -e "$STATE/band.backup" ]; then
 fi
 
 sta_channel() {
+    # 只认目标接口那一段：顶格行（phy#N）表示新的一节，Interface 行决定是否匹配。
+    # 旧写法不设边界，STA 段没有 channel 行（=未连接）时会一直往下扫，
+    # 把下一个接口（往往是 ap0）的信道当成 STA 的信号 →
+    # "STA 离开信道"的停止/重建逻辑永远不会触发，留下一个没有上行的僵尸热点。
     $IW dev 2>/dev/null | awk -v s="$STA_IF" '
-        $0 ~ "Interface "s {f=1; next}
-        f && /channel/ {print $2; exit}'
+        /^[^ \t]/ { f=0; next }
+        /Interface[ \t]/ { f=($2==s); next }
+        f && /channel/ { print $2; exit }'
 }
 
 # 热点停止时清掉"在线客户端数"标记，免得面板继续显示旧数据
@@ -132,9 +137,16 @@ write_clients(){
 
 ensure_ap0() {
     if ! ip link show "$AP_IF" >/dev/null 2>&1; then
-        local wiphy
-        wiphy=$($IW dev "$STA_IF" info 2>/dev/null | awk '/^wiphy/{print $2}')
-        $IW phy "phy${wiphy:-0}" interface add "$AP_IF" type __ap \
+        local wiphy=""
+        # iw 的输出是制表符缩进的（"\twiphy 0"），必须用 $1=="wiphy" 匹配；
+        # 以前用 /^wiphy/ 永远匹配不到，于是默默回落到 phy0 ——
+        # 多射频机器上 ap0 会被建到错误的无线电上（或直接创建失败、热点永远起不来）
+        wiphy=$($IW dev "$STA_IF" info 2>/dev/null | awk '$1=="wiphy"{print $2; exit}')
+        if [ -z "$wiphy" ]; then
+            log "取不到 $STA_IF 的 wiphy，无法确定把 $AP_IF 建在哪块无线电上"
+            return 1
+        fi
+        $IW phy "phy$wiphy" interface add "$AP_IF" type __ap \
             || { log "创建 $AP_IF 失败"; return 1; }
         log "已创建 $AP_IF (type AP)"
     fi
@@ -196,6 +208,7 @@ trap cleanup TERM INT
 
 loggedfail=0
 loggedoff=0
+loggedbad=0
 while :; do
     # ---- 阶段1：等 STA 关联（任意频段，热点跟随其信道；禁用/普通模式时静默等待）----
     while :; do
@@ -209,9 +222,15 @@ while :; do
         fi
         loggedoff=0
         # 凭据未设置/仍是示例占位值/含控制字符则不启动（绝不用公开已知或坏掉的凭据起热点）
-        if hs_cred_problem >/dev/null; then
+        # 要说出来：否则面板只会一直显示"待命"，用户不知道是配置没填对
+        if _credwhy=$(hs_cred_problem); then
+            if [ "$loggedbad" -eq 0 ]; then
+                log "热点名称/密码不合法，暂不启动：$(printf '%s' "$_credwhy" | head -1)"
+                loggedbad=1
+            fi
             sleep 10; continue
         fi
+        loggedbad=0
         # 普通模式下本脚本让位
         if [ "$MODE" = "normal" ]; then
             sleep 5; continue

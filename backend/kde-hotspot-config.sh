@@ -21,7 +21,18 @@
 # 白名单：只有这些键会被加载成同名 shell 变量
 HS_KEYS="STA_IF AP_IF AP_IP AP_NET SSID PASS MODE COUNTRY FALLBACK_2G RULE_PRIO NORMAL_CHANNEL DHCP_START DHCP_END DHCP_DNS"
 
-hs_conf_path(){ printf '%s' "${KDE_HOTSPOT_CONF:-/etc/kde-hotspot/config}"; }
+# 解析配置文件路径。KDE_HOTSPOT_CONF 只给"非 root（自定义安装位置/测试）"或
+# 显式放行（KDE_HOTSPOT_CONF_ALLOW=1，deploy.sh 生成临时配置时用）的调用者使用：
+# 否则任何"保留了环境变量的特权调用者"都能让 root 去改写任意文件。
+hs_conf_path(){
+    if [ -n "${KDE_HOTSPOT_CONF:-}" ]; then
+        if [ "$(id -u 2>/dev/null)" != "0" ] || [ "${KDE_HOTSPOT_CONF_ALLOW:-0}" = "1" ]; then
+            printf '%s' "$KDE_HOTSPOT_CONF"
+            return 0
+        fi
+    fi
+    printf '%s' "/etc/kde-hotspot/config"
+}
 
 hs_key_known(){
     case " $HS_KEYS " in
@@ -349,14 +360,21 @@ hs_conf_set(){
         printf '%s=%s\n' "${keys[$i]}" "$(_hs_quote_value "${vals[$i]}")" >> "$tmp"
     done
 
+    # 原子替换：先把属主/权限设在临时文件上，再用同目录 mv 覆盖。
+    # 不能用 install/cat 覆盖目标：install 会先 unlink 再创建（文件会短暂不存在，
+    # 并发 status 会读到"配置不可读"，中途崩溃还会整个丢掉 SSID/密码），cat > 会就地截断。
     if [ "$(id -u 2>/dev/null)" = "0" ]; then
-        # root：保持 root 属主与原属组（配置含密码，权限由 ctl 的 fix_conf_perm 兜底）
         local grp=""
         grp=$(stat -c %G "$f" 2>/dev/null)
         [ -n "$grp" ] || grp=root
-        install -m 640 -o root -g "$grp" "$tmp" "$f" 2>/dev/null || cat "$tmp" > "$f"
-    else
-        cat "$tmp" > "$f"      # 非 root（自定义位置/测试）：保留原文件权限
+        chown root:"$grp" "$tmp" 2>/dev/null || true
+        chmod 640 "$tmp" 2>/dev/null || true
+    fi
+    if ! mv -f "$tmp" "$f" 2>/dev/null; then
+        # 极少数文件系统不支持 rename 覆盖：退回就地写（并尽力收紧权限）
+        cat "$tmp" > "$f" 2>/dev/null || { rm -f "$tmp"; return 1; }
+        rm -f "$tmp"
+        return 0
     fi
     rm -f "$tmp"
     return 0
@@ -365,6 +383,11 @@ hs_conf_set(){
 # ---------- 凭据校验（ctl 与监督脚本共用，避免两份实现漂移）----------
 # hs_cred_problem [SSID] [PASS]：打印所有问题（第一行即原因）；有问题返回 0
 hs_cred_problem(){
+    # 长度上限（SSID ≤32、PSK 8-63）是 802.11 的**字节**限制：
+    # 这里固定 LC_ALL=C 让 ${#v} 数的是字节。否则 11 个汉字的 SSID 在面板（UTF-8，
+    # 按字符=11）会被放行，而 systemd 服务（C locale，按字节=33）会拒掉，
+    # 表现为"面板说开了、热点永远起不来且没有任何提示"。
+    local LC_ALL=C
     local s=${1-${SSID:-}}
     local p=${2-${PASS:-}}
     local bad=0

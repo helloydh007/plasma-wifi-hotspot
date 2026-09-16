@@ -205,6 +205,21 @@ hs_conf_load
 is "写回后的值可回读（load）" "final-ssid" "${SSID:-}"
 is "其它键不受影响" "first-pass-1234" "$(hs_conf_get PASS)"
 
+echo "== M2) 写回是原子替换：文件不会短暂消失、也不留临时文件 =="
+cat > "$KDE_HOTSPOT_CONF" <<'EOF'
+SSID=MyNet
+PASS=secret-pass-123
+EOF
+( miss=0
+  for _ in $(seq 1 400); do [ -e "$KDE_HOTSPOT_CONF" ] || miss=$((miss+1)); done
+  printf '%s\n' "$miss" > "$TMP/miss" ) &
+_watch=$!
+for i in $(seq 1 60); do hs_conf_set SSID "n$i" >/dev/null 2>&1; done
+wait "$_watch"
+is "并发观察期间配置文件从未消失（原子替换）" "0" "$(cat "$TMP/miss" 2>/dev/null)"
+is "没有留下临时文件" "0" "$(find "$TMP" -maxdepth 1 -name 'config.??????' | wc -l | tr -d ' ')"
+is "写回后内容正确" "n60" "$(hs_conf_get SSID)"
+
 echo "== N) 可选键缺省时由库统一补默认值（否则 set -u 下引用会直接崩）=="
 # 实机故障复盘：kde-hotspot.sh 先设了 RULE_PRIO=${RULE_PRIO:-8990}，随后 hs_conf_load
 # 会把白名单键全部 unset 再只装文件里有的键 → 默认值被清掉 → 引用时"未绑定变量"。
@@ -232,6 +247,25 @@ RULE_PRIO=
 EOF
 hs_conf_load
 is "写成空值也当没写（否则会拼出 priority \"\" 这种坏命令）" "8990" "${RULE_PRIO:-}"
+
+echo "== N2) 凭据长度按字节判定（不随 locale 变化）=="
+# SSID 上限 32 **字节**、PSK 8-63 字节。旧实现用 ${#v}（字符数），
+# 11 个汉字在 UTF-8 下算 11 字符被放行，而 systemd 服务在 C locale 下算 33 字节被拒 →
+# 面板说开了、热点永远起不来。这里显式在两种 locale 下都要求被拒。
+_wide=$(printf '热%.0s' $(seq 11))
+for loc in C C.UTF-8; do
+    if LC_ALL=$loc bash -c '. "$1"; hs_cred_problem "$2" p@ssw0rd123' _ "$LIB" "$_wide" >/dev/null 2>&1; then
+        ok "$loc 下 33 字节 SSID 被拒"
+    else
+        bad "$loc 下 33 字节 SSID 应被拒（否则会静默起不来）"
+    fi
+done
+_ok_ssid=$(printf '热%.0s' $(seq 10))     # 30 字节：应当放行
+if LC_ALL=C bash -c '. "$1"; hs_cred_problem "$2" p@ssw0rd123' _ "$LIB" "$_ok_ssid" >/dev/null 2>&1; then
+    bad "30 字节 SSID 不该被拒"
+else
+    ok "30 字节（10 个汉字）SSID 放行"
+fi
 
 echo "== O) 运行时标记的「是否属于本次开机」判定 =="
 # 用途：用户点了"关闭热点"后写的标记，只在**本次开机内**生效。

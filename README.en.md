@@ -197,8 +197,9 @@ If client packets do leave but no replies come back, the problem is upstream (ro
 bash tests/run-all.sh     # syntax + shellcheck + unit tests + QML syntax; same script CI runs
 ```
 
-- `tests/test-config.sh` — config-library unit tests (parsing, quoting/comments, injection, validation, atomic writes; 58 assertions)
-- `tests/test-ctl.sh` — **end-to-end** tests of the control script (108+ assertions): it `sed`s the absolute-path
+- `tests/test-config.sh` — config-library unit tests (parsing, quoting/comments, injection, validation, atomic writes, defaults, runtime-marker boot check; 85 assertions)
+- `tests/test-supervisor.sh` — **end-to-end** tests of the root supervisor (55 assertions, mock hostapd/iw/ip/iptables/nmcli)
+- `tests/test-ctl.sh` — **end-to-end** tests of the control script (152 assertions): it `sed`s the absolute-path
   declarations of the ctl into a temp dir and puts mock `iw`/`nmcli`/`systemctl`/`ip`/`iptables` on `PATH`, so real command
   sequences run and the assertions cover the emitted JSON, the resulting state/config files and the syscalls the script made.
   No root, no NIC, no real network — which is why it runs in CI.
@@ -214,6 +215,15 @@ CTL_SRC=/tmp/old-ctl bash tests/test-ctl.sh   # 63 passed / 45 failed before the
 
 On the old code the config's `$(command)` **was executed** (the test watches a marker file appear), `SSID=My$$Net`
 became `My41Net`, and `status` output containing a control character was not valid JSON at all; all of that is green now.
+
+## Known limitations
+
+- Backend `message` strings are Chinese (the applet's own UI text is bilingual) — the panel shows them verbatim.
+- `qmllint` in CI can only check **syntax** (Plasma QML modules are unavailable); if the tool is missing the job
+  **fails** instead of silently skipping.
+- In normal mode the PSK briefly appears in `nmcli`'s argv (readable via `/proc/<pid>/cmdline`); concurrent mode
+  keeps it in a 0600 `hostapd.conf`.
+- `set-credentials` does **not** accept a password on the command line: use `--pass-file` or `-` (stdin).
 
 ## Acknowledgments
 

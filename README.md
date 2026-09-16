@@ -28,7 +28,10 @@ Windows 的这个能力带到 Linux：**不插网线、不断 Wi-Fi，照样开�
 - **双语界面**：跟随系统语言自动切换（KDE 标准 i18n：英文源串 + `po/zh_CN.po`，已编译进插件包）。改了界面文案后跑 `./build-translations.sh` 重新生成翻译即可。注：来自后端脚本的执行结果消息目前仍是中文
 - 面板里可切换模式、开关热点、**开机自启**开关
 - **修改热点名称与密码**：面板里直接改（运行中的热点会自动重启使新值生效）
-- **依赖自检**：逐项检查 hostapd / dnsmasq / iw / iptables / 后端文件 / polkit 授权，缺失时给出可复制的修复命令
+- **状态如实反映**：面板状态以"真的在发信标"＋"systemd 单元的真实状态（ActiveState/SubState）"为准，分
+  运行中 / 启动中 / 待命 / 已关闭 / **未运行（后端服务启动失败）** 五档——后端崩了不会再显示成"已开启"
+  （`systemctl is-active` 对崩溃后自动重启中的单元也返回 0，只看它会把失败报成成功）
+- **依赖自检**：逐项检查 hostapd / dnsmasq / iw / iptables / 后端文件（含配置库）/ polkit 授权，缺失时给出可复制的修复命令
 - **免密码操作**：polkit 规则只授权执行一个控制脚本（见下"安全"）
 - 另有**桌面入口**：应用菜单/KRunner 搜"Wi-Fi 热点控制"可打开独立窗口
 
@@ -136,7 +139,7 @@ polkit 动作文件。升级后无需手工操作。
 
 - 点托盘图标 → 面板：状态、开/关、模式单选、开机自启、依赖自检
 - **开**：并发模式下会跟随 Wi-Fi 当前信道起草热点（被固件拒绝 5GHz 时自动降 2.4GHz）；普通模式下会先断开 Wi-Fi 再起 AP（面板上有明确提示）
-  - 点"开启"后 15 秒内还没发出信标，面板会停在"**开启中…**"（此时再点一次就是**取消**）
+  - 点"开启"后 90 秒内还没发出信标，面板会停在"**开启中…**"（此时再点一次就是**取消**）
   - 主服务起来了但 DHCP（dnsmasq）没起来时，面板会**明确报 DHCP 不可用**并展开一条警告横幅——以前这种情况会显示成"运行中"，
     客户端连得上却拿不到 IP，很难排查
 - **关**：只停当前 —— 停热点 + 把 Wi-Fi 频段偏好恢复成关闭前的值（通常回 5GHz），
@@ -242,7 +245,8 @@ sudo rm -f /etc/systemd/system/kde-hotspot.service \
            /usr/share/polkit-1/actions/io.github.helloydh007.hotspotctl.policy \
            /etc/polkit-1/rules.d/49-kde-hotspot.rules \
            /etc/NetworkManager/conf.d/99-kde-hotspot-ap0.conf
-sudo rm -rf /etc/kde-hotspot /var/lib/kde-hotspot /usr/local/share/kde-hotspot
+sudo rm -rf /etc/kde-hotspot /var/lib/kde-hotspot \
+            /usr/local/lib/kde-hotspot /usr/local/share/kde-hotspot
 sudo systemctl daemon-reload && sudo nmcli general reload
 
 # 3) 清理可能残留的虚拟接口与普通模式 NM profile（不存在会自动跳过）
@@ -254,13 +258,15 @@ nmcli connection delete kde-hotspot-normal 2>/dev/null || true
 #    只存在于内存里的开关）
 kpackagetool6 -t Plasma/Applet -r io.github.helloydh007.hotspot
 rm -f ~/.local/share/applications/io.github.helloydh007.hotspot.desktop
+rm -rf ~/.local/share/kde-hotspot
 # 若已卸载但托盘仍残留失效图标，再执行：
 # systemctl --user restart plasma-plasmashell
 ```
 
 说明：
 
-- `/var/lib/kde-hotspot` 里只有状态标记和频段备份（无密码）；`/etc/kde-hotspot/config` 里存着热点名称/密码（600），删掉即彻底清除
+- `/var/lib/kde-hotspot` 里只有状态标记和频段备份（无密码）；`/etc/kde-hotspot/config` 里存着热点名称/密码
+  （`root:<组> 640`，组是部署时从 `netdev`/`sudo`/`wheel` 里选中的那个，和 polkit 授权的组一致），删掉即彻底清除
 - 只想卸插件、保留后端（继续用命令行 `pkexec …/kde-hotspot-ctl` 控制）的话，只执行第 4 步即可
 - polkit 规则删除后即恢复默认行为：任何 `pkexec` 调用重新弹密码
 
@@ -272,7 +278,7 @@ rm -f ~/.local/share/applications/io.github.helloydh007.hotspot.desktop
 
 | 场景 | 现象与根因 | 自动处理 |
 |---|---|---|
-| **Docker 等软件重启** | 它们会把 `FORWARD` 链策略设为 DROP 并清掉链上的第三方规则 → 客户端能连上、拿到 IP，但所有流量被丢弃 | 监督脚本每约 3 秒补检转发/NAT 规则，缺了就补回 |
+| **Docker 等软件重启** | 它们会把 `FORWARD` 链策略设为 DROP 并清掉链上的第三方规则 → 客户端能连上、拿到 IP，但所有流量被丢弃 | 监督脚本循环里每约 15 秒补检一次转发/NAT 规则，缺了就补回 |
 | **代理软件 TUN 模式**（Clash Verge / mihomo / sing-box 等） | 它们插入 9000 段的策略路由，把流量导向自己的 TUN 并屏蔽默认路由 → 客户端的转发包"Network is unreachable"被内核静默丢弃（`IpOutNoRoutes` 增长） | 自动为热点网段插入更高优先级的规则（`from 10.233.33.0/24 lookup main`，优先级 8990，可用 `RULE_PRIO` 调整），让客户端流量绕开代理直连上行 |
 
 排查命令（都以 root 运行）：
@@ -285,6 +291,16 @@ sudo tcpdump -ni ap0 host 10.233.33.50     # 客户端到底发了什么
 ```
 
 如果客户端流量确实发出去了却收不到回包，问题在更上游（路由器/运营商），与热点无关。
+
+### 关闭热点后，重启又自己开起来了？
+
+这是两个独立开关，按设计如此：
+
+- **关闭热点** 只停当前这一次，并写一个"保持关闭"标记——但它**只在本次开机内有效**，也**不会**改你的
+  "开机自启"设置；
+- **开机自启** 才决定"开机时要不要自动起热点"。想让它在重启后也保持关闭，把面板里的"开机自启"也关掉即可。
+
+（反过来：如果你关了热点、但自启是开着的，重启后热点照常起来；上次开机留下的旧标记不会压制自启。）
 
 ### 手工改了 `/etc/kde-hotspot/config`，好像没生效
 
@@ -302,28 +318,48 @@ sudo systemctl restart kde-hotspot kde-hotspot-dhcp
 （地址池配错、53 端口被别的程序占用等）。dnsmasq 用 `bind-dynamic` 只绑热点接口上，
 与 systemd-resolved 的 `127.0.0.53` 不冲突，不需要停 resolved。
 
+## 已知限制
+
+- **后端脚本返回的提示文案是中文**（插件自身的界面文案有中英双语）。面板里的操作结果直接显示后端那行
+  `message`，所以英文环境下这一步的反馈仍是中文——彻底解决需要给 ctl 的每条消息加机器可读的 code 再由插件翻译，
+  属于接口改造，暂未做。
+- **`cleanup` / `sync-helpers` 不输出 JSON**（它们是内部/排障命令，插件不调用）；契约上只有动作类命令给 JSON。
+- **给插件做语法检查的 `qmllint` 没有 Plasma 的 QML 模块**，只能查语法（import 相关的警告一律忽略）；
+  CI 里若找不到 qmllint 会**直接失败**而不是静默跳过（这道门以前是空的，见 CHANGELOG 1.1.1）。
+- **普通模式的密码会短暂出现在 `nmcli` 的命令行里**（`/proc/<pid>/cmdline` 同机可读）。并发模式不走这条路
+  （PSK 只写在 600 的 `hostapd.conf`）。彻底修复要改成 NM keyfile 导入，属于行为变更，暂未做。
+- `set-credentials` **不接受命令行形式的密码**（那会出现在 `ps`/`/proc`）：请用 `--pass-file` 或 `-`（stdin）。
+
 ## 开发与测试
 
 ```bash
 bash tests/run-all.sh     # 语法 + shellcheck + 单测 + QML 语法；本地与 CI 跑的是同一套
 ```
 
-- `tests/test-config.sh`：配置库单测（解析、引号/注释、注入、校验、原子写回，58 项）
-- `tests/test-ctl.sh`：控制脚本**端到端**测试（108+ 项）——把 ctl 里的绝对路径 sed 到临时目录，用 mock 的
+- `tests/test-config.sh`（**79 项**）：配置库单测——解析、引号/注释、注入、校验、原子写回、重复键语义、
+  可选键默认值、"运行时标记是否属于本次开机"
+- `tests/test-ctl.sh`（**128 项**）：控制脚本端到端——把 ctl 里的绝对路径 sed 到临时目录，用 mock 的
   `iw`/`nmcli`/`systemctl`/`ip`/`iptables` 跑出真实的命令序列，再断言 JSON 结果、状态/配置文件的变化和实际发出的系统调用。
-  不需要 root、不需要网卡、不碰真实网络，所以 CI 里也能跑
+  覆盖 on/off/mode/autostart/set-credentials/status、`--pass-file` 的 5 种拒绝场景、
+  "崩溃-自动重启"必须报失败、"关闭热点不动开机自启"等
+- `tests/test-supervisor.sh`（**46 项**）：监督脚本（`kde-hotspot.sh`）端到端——用 mock 的
+  hostapd/iw/ip/iptables/sysctl/nmcli 跑，覆盖"配置缺可选键不能崩"、5G 被拒自动回退 2.4G、
+  `FALLBACK_2G=no` 时不动用户 Wi-Fi、非拒绝类失败不降频、DFS 延长等待、陈旧"保持关闭"标记被忽略等
+- 三个套件都**不需要 root、不需要网卡、不碰真实网络**（mock + 临时目录），所以 CI 里也能跑
 - `.github/workflows/ci.yml`：push/PR 跑上面全部检查；QML 部分用 `qmllint` 做语法检查
   （CI 里装不齐 Plasma 的 QML 模块，import 相关的警告忽略，只有语法错误才失败）
 
 确认这些断言不是"恒真"的红-绿自检（把同一批断言跑在修复前的实现上）：
 
 ```bash
-git show HEAD:backend/kde-hotspot-ctl > /tmp/old-ctl
-CTL_SRC=/tmp/old-ctl bash tests/test-ctl.sh   # 修复前：63 通过 / 45 失败
+git show HEAD:backend/kde-hotspot-ctl  > /tmp/old-ctl   # 控制脚本
+git show HEAD:backend/kde-hotspot.sh   > /tmp/old-sup   # 监督脚本
+CTL_SRC=/tmp/old-ctl bash tests/test-ctl.sh        # 修复前：63 通过 / 45 失败
+SUP_SRC=/tmp/old-sup bash tests/test-supervisor.sh # 修复前：25 通过 / 14 失败
 ```
 
 修复前的实现里，配置里的 `$(command)` 会被执行（测试会看到标记文件被创建）、`SSID=My$$Net` 会被展开成 `My41Net`、
-带控制字符的 `status` 输出不是合法 JSON；修复后这些项全绿。
+带控制字符的 `status` 输出不是合法 JSON；监督脚本则会在"配置里没写 RULE_PRIO"时 87ms 就退出。修复后这些项全绿。
 
 ## 参考与致谢
 

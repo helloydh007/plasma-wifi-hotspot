@@ -40,6 +40,7 @@ CONF="$WORK/config"
 CTL="$WORK/kde-hotspot-ctl"
 OUTFILE="$WORK/out.json"
 ARP_FIXTURE="$WORK/arp"
+DNSMASQ_FIXTURE="$WORK/dnsmasq.conf"
 LIB="$REPO/backend/kde-hotspot-config.sh"
 cleanup_all(){ rm -rf "$WORK"; }
 trap cleanup_all EXIT
@@ -140,8 +141,24 @@ EOF
     cat > "$BIN/iptables" <<'EOF'
 #!/bin/bash
 printf 'iptables %s\n' "$*" >> "$MOCKLOG"
-# -C 查询一律回答「规则存在」，好让 -D 真正被执行
-case "$*" in *" -C "*) exit 0 ;; esac
+S=$MOCKSTATE
+# 归一化：去掉动作词与 -I 的插入位置，使 -C / -I / -A / -D 能比对同一条规则。
+# 注意把参数串用空格包起来，否则"以动作词开头"的调用（iptables -C FORWARD ...）匹配不到，
+# 会一路落到最后的 exit 0，表现为"-C 永远说规则存在" → 重复插入的 bug 就测不出来。
+args=" $* "
+norm=$(printf '%s' "$args" | sed -E 's/ -(C|I|A|D) / /; s/ (FORWARD|INPUT|OUTPUT|PREROUTING|POSTROUTING) [0-9]+ / \1 /')
+rule=${norm# }
+rule=${rule% }
+case "$args" in
+  *" -C "*) grep -qxF -- "$rule" "$S/ipt.rules" 2>/dev/null && exit 0 || exit 1 ;;
+  *" -I "*|*" -A "*)
+      grep -qxF -- "$rule" "$S/ipt.rules" 2>/dev/null || printf '%s\n' "$rule" >> "$S/ipt.rules"
+      exit 0 ;;
+  *" -D "*)
+      grep -vxF -- "$rule" "$S/ipt.rules" > "$S/ipt.tmp" 2>/dev/null || true
+      mv -f "$S/ipt.tmp" "$S/ipt.rules" 2>/dev/null || true
+      exit 0 ;;
+esac
 exit 0
 EOF
 
@@ -223,6 +240,14 @@ emit_conns(){
 case "$cmd" in
     "device status"*)
         cat "$S/nm.devices" 2>/dev/null; exit 0 ;;
+esac
+# 测试开关：$MOCKSTATE/fail-band 存在时，改频段偏好返回失败（用于验证备份不被误删）
+case "$cmd" in
+    *"802-11-wireless.band"*)
+        [ -e "$S/fail-band" ] && exit 1
+        exit 0 ;;
+esac
+case "$cmd" in
     "connection show"|"connection show "*)
         case "$cmd" in
             "connection show --active"*) emit_conns; exit 0 ;;
@@ -255,6 +280,7 @@ patch_ctl(){
         -e "s|^NMCLI=.*|NMCLI=$BIN/nmcli|" \
         -e "s|^IPT=.*|IPT=$BIN/iptables|" \
         -e "s|^ARP=.*|ARP=$ARP_FIXTURE|" \
+        -e "s|^DNSMASQ_CONF=.*|DNSMASQ_CONF=$DNSMASQ_FIXTURE|" \
         "$CTL_SRC" > "$CTL"
     chmod +x "$CTL"
     grep -q "^STATE=$STATE$" "$CTL" || { echo "补丁失败：STATE 未替换"; exit 1; }
@@ -291,6 +317,7 @@ uuid-home|HomeWifi|802-11-wireless|wlan0|yes
 uuid-eth0|Wired|802-3-ethernet|eth0|yes
 EOD
     : > "$ARP_FIXTURE"
+    : > "$MOCKSTATE/ipt.rules"
     : > "$WORK/out.txt"
     cfg_set SSID MyNet PASS secret-pass-123 MODE concurrent STA_IF wlan0 AP_IP 10.233.33.1
 }
@@ -662,6 +689,14 @@ section "L. cleanup：按 rules.state 记录拆规则（接口/网段改过也�
 reset
 printf 'oldwlan ap9 10.9.9.0/24\n' > "$RUN/rules.state"
 cfg_set STA_IF newwlan AP_IF ap0 AP_IP 10.233.33.1
+# mock 是有状态的：先造出"系统上真实存在的残留规则"，才能验证 cleanup 真的拆掉了它们
+cat > "$MOCKSTATE/ipt.rules" <<'EOD'
+-t nat POSTROUTING -s 10.9.9.0/24 -o oldwlan -j MASQUERADE
+FORWARD -i ap9 -o oldwlan -j ACCEPT
+FORWARD -i oldwlan -o ap9 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-t nat POSTROUTING -s 10.233.33.0/24 -o newwlan -j MASQUERADE
+FORWARD -i ap0 -o newwlan -j ACCEPT
+EOD
 run cleanup
 is "cleanup 正常退出" "$RC" "0"
 mock_has "iptables -t nat -D POSTROUTING -s 10.9.9.0/24 -o oldwlan -j MASQUERADE" \
@@ -672,6 +707,7 @@ mock_has "ip rule del from 10.9.9.0/24 lookup main" && ok "按记录删策略路
 mock_has "iptables -t nat -D POSTROUTING -s 10.233.33.0/24 -o newwlan" \
     && ok "当前 config 的组合也清一遍" || no "当前 config 的组合也清一遍"
 is "rules.state 已删除" "$([ -e "$RUN/rules.state" ] && echo yes || echo no)" "no"
+is "规则表里不再有热点网段（真的拆干净）" "0" "$(grep -cE '10[.]9[.]9[.]0/24|10[.]233[.]33[.]0/24' "$MOCKSTATE/ipt.rules" 2>/dev/null || true)"
 reset
 printf 'bg\n' > "$STATE/band.backup"
 printf 'uuid-home\n' > "$STATE/band.conn"
@@ -692,6 +728,79 @@ reset
 : > "$STATE/disabled"
 run_status
 is "本次开机写的标记仍算「已关闭」" "$(jget disabled)" "true"
+
+section "N. sync-helpers：按 config 渲染 dnsmasq.conf（以前完全没测过）"
+reset
+rm -f "$DNSMASQ_FIXTURE"
+: > "$MOCKLOG"
+run sync-helpers
+is "sync-helpers 正常退出" "$RC" "0"
+contains "接口取 AP_IF" "$(cat "$DNSMASQ_FIXTURE" 2>/dev/null)" "interface=ap0"
+contains "地址池取 DHCP_START/END" "$(cat "$DNSMASQ_FIXTURE" 2>/dev/null)" "dhcp-range=10.233.33.50,10.233.33.150,255.255.255.0,12h"
+contains "网关取 AP_IP" "$(cat "$DNSMASQ_FIXTURE" 2>/dev/null)" "dhcp-option=3,10.233.33.1"
+contains "DNS 取 DHCP_DNS" "$(cat "$DNSMASQ_FIXTURE" 2>/dev/null)" "dhcp-option=6,223.5.5.5,119.29.29.29"
+contains "带 bind-dynamic（只绑热点接口，不与 resolved 抢 53）" "$(cat "$DNSMASQ_FIXTURE" 2>/dev/null)" "bind-dynamic"
+is "文件权限 644（不含密钥）" "$(stat -c %a "$DNSMASQ_FIXTURE" 2>/dev/null)" "644"
+: > "$MOCKLOG"
+run sync-helpers
+is "内容没变 → 不重启 DHCP 单元" "$(grep -c 'try-restart' "$MOCKLOG" 2>/dev/null || true)" "0"
+cfg_set DHCP_START 60 DHCP_END 160
+: > "$MOCKLOG"
+run sync-helpers
+contains "改了地址池就重新渲染" "$(cat "$DNSMASQ_FIXTURE")" "10.233.33.60,10.233.33.160"
+mock_has "systemctl try-restart kde-hotspot-dhcp.service" && ok "内容变化后重启 DHCP 单元" || no "内容变化后重启 DHCP 单元"
+
+section "O. 密码必须走 --pass-file / stdin（不再接受命令行密码）"
+reset
+run set-credentials NewName newpass-1234
+is "拒绝命令行密码" "$(jget ok)" "false"
+is "退出码 2" "$RC" "2"
+contains "提示改用 --pass-file 或 -" "$(jget message)" "--pass-file"
+is "配置没被改动" "$(cfg_get PASS)" "secret-pass-123"
+run set-credentials NewName --pass-file /proc/self/environ
+contains "拒绝 /proc 下的伪文件" "$(jget message)" "/proc"
+
+section "P. 切模式要把上一套机制对 Wi-Fi 的副作用还回去"
+# concurrent（可能把频段钉在 2.4G）→ normal：必须恢复频段偏好
+reset
+printf 'pg\n' > "$STATE/band.backup"
+printf 'uuid-home\n' > "$STATE/band.conn"
+: > "$MOCKLOG"
+run mode normal
+mock_has "nmcli connection modify uuid-home 802-11-wireless.band pg" \
+    && ok "切走 concurrent 时恢复频段偏好" || no "切走 concurrent 时恢复频段偏好" "$(grep 'connection modify' "$MOCKLOG")"
+# normal（断开了 Wi-Fi）→ concurrent：必须把原连接接回来
+reset
+cfg_set MODE normal
+printf 'uuid-home\n' > "$STATE/sta-conn.backup"
+# normal 模式的"开启"会把 Wi-Fi 断开：这里必须模拟成"未连接"，
+# 否则 restore_sta_conn 会（正确地）认为用户已经连上了而跳过恢复
+cat > "$MOCKSTATE/nm.conns" <<'EOD'
+uuid-home|HomeWifi|802-11-wireless|wlan0|no
+EOD
+: > "$MOCKLOG"
+run mode concurrent
+mock_has "nmcli connection up uuid uuid-home" \
+    && ok "切走 normal 时把 Wi-Fi 接回来" || no "切走 normal 时把 Wi-Fi 接回来"
+# 恢复失败时：备份必须留着，日志不许说"已恢复"
+reset
+printf 'pg\n' > "$STATE/band.backup"
+printf 'uuid-home\n' > "$STATE/band.conn"
+: > "$MOCKSTATE/fail-band"
+run cleanup
+is "恢复失败时保留备份（否则永久钉在 2.4G）" "$([ -e "$STATE/band.backup" ] && echo 有 || echo 无)" "有"
+is "备份也保留" "$([ -e "$STATE/band.conn" ] && echo 有 || echo 无)" "有"
+not_contains "日志不许谎报已恢复" "$(cat "$WORK/out.txt")" "已恢复"
+rm -f "$MOCKSTATE/fail-band"
+
+section "Q. 配置读不到时：如实报 config_readable=false，不拿默认值冒充"
+reset
+chmod 000 "$CONF"
+run_status
+is "config_readable=false" "$(jget config_readable)" "false"
+is "SSID 不给假值（空）" "$(jget hotspot.ssid)" ""
+is "status 仍然是合法 JSON" "$(python3 -c 'import json,sys;json.load(open(sys.argv[1]));print("ok")' "$OUTFILE" 2>/dev/null || echo bad)" "ok"
+chmod 600 "$CONF"
 
 section "M. 其它：JSON 结果始终是一行、未知命令退出码 2"
 reset

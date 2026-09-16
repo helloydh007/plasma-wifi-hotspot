@@ -4,7 +4,7 @@
 #
 # 用法:
 #   kde-hotspot-ctl on            按当前模式开启热点
-#   kde-hotspot-ctl off           关闭热点（保持关闭，并关闭开机自启）
+#   kde-hotspot-ctl off           关闭热点（只停当前；不改「开机自启」设置）
 #   kde-hotspot-ctl mode M        切换模式: concurrent | normal
 #   kde-hotspot-ctl autostart on|off
 #   kde-hotspot-ctl set-credentials SSID [PASS|-] [--pass-file FILE]
@@ -40,6 +40,8 @@ STABACKUP="$STATE/sta-conn.backup"
 CLIENTS="$STATE/clients"
 RULESTATE="$RUN/rules.state"
 NM_AP_CON=kde-hotspot-normal
+# dnsmasq 配置由 ctl 依据 config 渲染（顶层声明：测试要能把它指到临时目录）
+DNSMASQ_CONF=/etc/kde-hotspot/dnsmasq.conf
 UNIT_MAIN=kde-hotspot.service
 UNIT_DHCP=kde-hotspot-dhcp.service
 UNIT_NORMAL=kde-hotspot-normal.service
@@ -250,13 +252,20 @@ restore_band(){
     c=$(cat "$CONNBACKUP" 2>/dev/null)
     [ -n "${c:-}" ] || c=$(sta_conn_name)
     v=$(cat "$BANDBACKUP" 2>/dev/null)
-    rm -f "$BANDBACKUP" "$CONNBACKUP"
-    if [ -n "${c:-}" ]; then
-        $NMCLI connection modify "$c" 802-11-wireless.band "$v" >/dev/null 2>&1 || true
+    if [ -z "${c:-}" ]; then
+        # 找不到原连接：保留备份，下次还能再试（删了就永久钉在 2.4GHz）
+        log "找不到原 Wi-Fi 连接，频段备份保留（${v:-自动}）"
+        return 1
+    fi
+    # 确认改成功才删备份：旧实现先 rm 再改且无条件打印"已恢复"，
+    # 失败时用户被永久钉在 2.4GHz、恢复数据还没了，日志还在骗人
+    if $NMCLI connection modify "$c" 802-11-wireless.band "$v" >/dev/null 2>&1; then
+        rm -f "$BANDBACKUP" "$CONNBACKUP"
         $NMCLI connection up "$c" >/dev/null 2>&1 || true
         log "已恢复 '$c' 的频段偏好（${v:-自动}）"
     else
-        log "频段备份已清理（找不到原连接，无法恢复）"
+        log "恢复 '$c' 的频段偏好失败（${v:-自动}），备份保留以便重试"
+        return 1
     fi
 }
 
@@ -280,7 +289,7 @@ restore_sta_conn(){
 # dnsmasq 的 interface / dhcp-range / 网关全部由 AP_IP 推导，避免用户改了
 # AP_IP 之后 dnsmasq 静默失效（旧版把这三项写死在 dnsmasq.conf）。
 sync_dnsmasq(){
-    local dnsf=/etc/kde-hotspot/dnsmasq.conf
+    local dnsf=$DNSMASQ_CONF
     local pre; pre=${AP_IP%.*}
     [ -n "${pre:-}" ] || pre=10.233.33
     local tmp; tmp=$(mktemp) || return 1
@@ -293,7 +302,15 @@ sync_dnsmasq(){
         printf 'dhcp-option=6,%s\n' "$DHCP_DNS"
     } > "$tmp"
     if ! cmp -s "$tmp" "$dnsf" 2>/dev/null; then
-        install -m 644 -o root -g root "$tmp" "$dnsf"
+        # 先设权限再原子替换：install 会先 unlink，dnsmasq 可能读到"文件不存在"
+        # dnsmasq.conf 不含密钥，固定 644；只有 root 才需要 chown
+        chmod 644 "$tmp" 2>/dev/null || true
+        if [ "$(id -u 2>/dev/null)" = "0" ]; then
+            chown root:root "$tmp" 2>/dev/null || true
+        fi
+        if ! mv -f "$tmp" "$dnsf" 2>/dev/null; then
+            install -m 644 -o root -g root "$tmp" "$dnsf"
+        fi
         log "已按 config 重新生成 $dnsf（接口 $AP_IF / 网关 $AP_IP / DNS $DHCP_DNS）"
         systemctl try-restart "$UNIT_DHCP" >/dev/null 2>&1 || true
     fi
@@ -466,9 +483,18 @@ do_mode(){
     # 只把自启指向新模式的单元（关热点、切模式都不该偷偷改用户的开关）。
     local was_auto=no
     [ "$(autostart_state)" = on ] && was_auto=yes
+    local was_mode="$MODE"
     touch_public "$DISABLED"
     stop_normal
     stop_concurrent
+    # 还原上一套机制对用户 Wi-Fi 的副作用：normal 模式断开了 Wi-Fi，
+    # concurrent 模式可能把频段钉在 2.4GHz。不还原的话，切完模式用户会发现自己
+    # Wi-Fi 断开/降频，而负责收拾的 off/cleanup 在切模式时根本不会跑。
+    if [ "$was_mode" = normal ]; then
+        restore_sta_conn
+    else
+        restore_band
+    fi
     if ! hs_conf_set MODE "$m"; then
         log "写入配置失败"
         result false "写入配置失败"
@@ -521,13 +547,37 @@ pass_file_problem(){
 # 由调用方负责 result/log——否则调用方 `if ! p=$(read_pass_file ...)` 会把
 # JSON 当成密码，或者 JSON 被吞进变量、面板看不到任何输出。
 read_pass_file(){
-    local f=${1:-} why pass dir
+    local f=${1:-} why pass dir fd st fuid fmode fsize
+    # /proc /sys 下的伪文件能骗过"600 普通文件"的检查（属主是自己、mode 400、size 0、
+    # 目录 555），而内容是内核生成的——直接拒掉这些前缀
+    case "$f" in
+        /proc/*|/sys/*) printf '%s' "拒绝 /proc 或 /sys 下的密码文件"; return 1 ;;
+    esac
     why=$(pass_file_problem "$f")
     if [ -n "$why" ]; then
         printf '%s' "$why"
         return 1
     fi
-    pass=$(cat -- "$f" 2>/dev/null || true)
+    # 只打开一次，之后所有属性检查与读取都针对同一个已打开对象：
+    # 旧实现先按路径 stat、再按路径 cat，调用者可以在两步之间把文件换成符号链接，
+    # 让 root 去读任意文件（例如 /dev/zero → 无界读取）
+    exec {fd}<"$f" 2>/dev/null || { printf '%s' "打不开密码文件"; return 1; }
+    st=$(stat -Lc '%u %a %s' "/proc/self/fd/$fd" 2>/dev/null)
+    # shellcheck disable=SC2086  # 这里要按空格拆成三段
+    set -- $st
+    fuid=${1:-}; fmode=${2:-}; fsize=${3:-}
+    if [ "$fuid" != "${PKEXEC_UID:-0}" ] || [ $(( 0${fmode} & 077 )) -ne 0 ] \
+       || [ "${fsize:-0}" -gt "$PASS_FILE_MAX" ]; then
+        exec {fd}<&-
+        printf '%s' "密码文件在检查后被替换（属性已不合格）"
+        return 1
+    fi
+    pass=$(head -c "$((PASS_FILE_MAX + 1))" <&"$fd" 2>/dev/null || true)
+    exec {fd}<&-
+    if [ "${#pass}" -gt "$PASS_FILE_MAX" ]; then
+        printf '%s' "密码文件过大"
+        return 1
+    fi
     rm -f -- "$f" 2>/dev/null || true
     dir=$(dirname -- "$f")
     case "$dir" in
@@ -546,11 +596,21 @@ set_credentials(){
                 pf="${1:-}"
                 [ "$#" -gt 0 ] && shift
                 ;;
-            *)
-                if [ -z "$ssid" ]; then ssid="$1"
-                elif [ -z "$pass" ]; then pass="$1"
-                fi
+            -)
+                # 从 stdin 读（"-" 本身不含密码，安全）
                 shift
+                pass="-"
+                ;;
+            *)
+                if [ -z "$ssid" ]; then
+                    ssid="$1"
+                    shift
+                else
+                    # 拒绝把密码写在命令行：pkexec 的 argv 同机其他用户可读
+                    log "拒绝命令行形式的密码（ps/proc 可见）"
+                    result false "为安全起见不再接受命令行密码：请用 --pass-file <600 文件> 或 - （从 stdin 读）"
+                    return 2
+                fi
                 ;;
         esac
     done
@@ -703,9 +763,13 @@ do_status(){
     printf '  "config_readable": %s,\n' "$([ "$CONF_READABLE" = yes ] && echo true || echo false)"
     printf '  "sta_if_auto": %s,\n' "$([ "$sta_if_auto" = yes ] && echo true || echo false)"
     printf '  "wifi": {"iface": "%s", "present": "%s", "type": "%s", "connected": "%s", "ssid": "%s", "channel": "%s", "freq": "%s", "band": "%s"},\n' \
-        "$(jstr "$STA_IF")" "$iface_present" "$(jstr "${stype:-}")" "$conn" "$(jstr "${ssid:-}")" "${stach:-}" "${freq:-}" "${band:-}"
+        "$(jstr "$STA_IF")" "$iface_present" "$(jstr "${stype:-}")" "$conn" "$(jstr "${ssid:-}")" \
+        "$(jstr "${stach:-}")" "$(jstr "${freq:-}")" "$(jstr "${band:-}")"
+    # clients 只允许数字：状态文件理论上由 root 写，但 JSON 契约不该依赖这一点
+    clients=${clients//[!0-9]/}
     printf '  "hotspot": {"running": "%s", "mechanism": "%s", "ssid": "%s", "pass": "%s", "channel": "%s", "band": "%s", "gateway": "%s", "clients": %s, "fallback": %s, "dhcp_active": "%s"},\n' \
-        "$hot" "$mech" "$(jstr "$SSID")" "$(jstr "$PASS")" "${hch:-}" "${hband:-}" "${gw:-}" "$clients" "$fb" "$dhcp"
+        "$hot" "$mech" "$(jstr "$SSID")" "$(jstr "$PASS")" "$(jstr "${hch:-}")" "$(jstr "${hband:-}")" \
+        "$(jstr "${gw:-}")" "${clients:-0}" "$fb" "$dhcp"
     printf '  "concurrent_service_active": "%s",\n' "$conc"
     printf '  "concurrent_service_state": "%s",\n' "${svc_main:-unknown}/${sub_main:-unknown}"
     printf '  "normal_service_active": "%s",\n' "$nmact"
@@ -726,11 +790,12 @@ case "${1:-}" in
   *) cat >&2 <<EOF
 用法: kde-hotspot-ctl <命令>
   on                     按当前模式开启热点
-  off                    关闭热点（保持关闭，并关闭开机自启）
+  off                    关闭热点（只停当前，不动开机自启）
   mode concurrent|normal 切换模式（会先停掉两套机制）
   autostart on|off       开机自启
-  set-credentials SSID [PASS]   改热点名称/密码
-        PASS 省略=只改名称；PASS 为 - =从 stdin 读；--pass-file FILE =从文件读后删除
+  set-credentials SSID [--pass-file FILE | -]   改热点名称/密码
+        只给 SSID = 只改名称；--pass-file FILE = 从 600 文件读后删除；
+        - = 从 stdin 读。不再接受把密码写在命令行（ps/proc 里同机其他用户可见）
   cleanup                清理残留（恢复频段偏好、拆除 NAT/转发规则、清运行标记）
   sync-helpers           按 config 重新生成 dnsmasq.conf
   status                 状态 JSON
