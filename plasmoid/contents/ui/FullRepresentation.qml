@@ -53,6 +53,13 @@ QQC2.ScrollView {
                     font.pointSize: Kirigami.Theme.smallFont.pointSize
                 }
             }
+            // 执行中/等待热点就绪：转圈提示
+            QQC2.BusyIndicator {
+                visible: root.busy || root.awaitingHotspot
+                running: visible
+                implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                implicitHeight: Kirigami.Units.iconSizes.smallMedium
+            }
         }
 
         Kirigami.Separator { Layout.fillWidth: true }
@@ -124,8 +131,11 @@ QQC2.ScrollView {
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.smallSpacing
             Layout.rightMargin: Kirigami.Units.smallSpacing
-            enabled: !root.busy && root.ready
-            text: root.busy ? i18n("Running…") : ((root.isOff || !root.hotRunning) ? i18n("Turn on hotspot") : i18n("Turn off hotspot"))
+            // "开启中"期间按钮保持禁用/变暗，直到热点真正发出信标
+            enabled: !root.busy && !root.awaitingHotspot && root.ready
+            text: (root.busy || root.awaitingHotspot)
+                ? (root.awaitingHotspot || root.lastAction === "on" ? i18n("Starting hotspot…") : i18n("Running…"))
+                : ((root.isOff || !root.hotRunning) ? i18n("Turn on hotspot") : i18n("Turn off hotspot"))
             icon.name: (root.isOff || !root.hotRunning) ? "network-wireless-hotspot" : "dialog-cancel"
             onClicked: root.toggleHotspot()
         }
@@ -144,7 +154,7 @@ QQC2.ScrollView {
             Layout.fillWidth: true
             text: i18n("Concurrent (Wi-Fi stays on, hotspot follows the Wi-Fi channel)")
             checked: root.mode === "concurrent"
-            enabled: !root.busy
+            enabled: !root.busy && !root.awaitingHotspot
             onClicked: root.setMode("concurrent")
         }
         QQC2.RadioButton {
@@ -152,7 +162,7 @@ QQC2.ScrollView {
             Layout.fillWidth: true
             text: i18n("Normal (disconnect Wi-Fi, whole NIC as hotspot)")
             checked: root.mode === "normal"
-            enabled: !root.busy
+            enabled: !root.busy && !root.awaitingHotspot
             onClicked: root.setMode("normal")
         }
 
@@ -160,7 +170,7 @@ QQC2.ScrollView {
             Layout.leftMargin: Kirigami.Units.smallSpacing
             Layout.fillWidth: true
             text: i18n("Autostart hotspot at boot")
-            enabled: !root.busy
+            enabled: !root.busy && !root.awaitingHotspot
             checked: root.autostartState === "on"
             onClicked: root.setAutostart(checked)
         }
@@ -201,7 +211,7 @@ QQC2.ScrollView {
             Layout.rightMargin: Kirigami.Units.smallSpacing
             placeholderText: i18n("Hotspot name (1-32 characters)")
             text: root.hotspotSsid
-            enabled: !root.busy
+            enabled: !root.busy && !root.awaitingHotspot
         }
         QQC2.TextField {
             id: passField
@@ -210,13 +220,13 @@ QQC2.ScrollView {
             Layout.rightMargin: Kirigami.Units.smallSpacing
             placeholderText: i18n("New password (8-63 characters, empty = keep password)")
             echoMode: TextInput.Password
-            enabled: !root.busy
+            enabled: !root.busy && !root.awaitingHotspot
         }
         QQC2.Button {
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.smallSpacing
             Layout.rightMargin: Kirigami.Units.smallSpacing
-            enabled: !root.busy
+            enabled: !root.busy && !root.awaitingHotspot
             text: i18n("Apply name/password")
             icon.name: "dialog-ok-apply"
             onClicked: {

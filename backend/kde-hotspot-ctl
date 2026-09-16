@@ -141,7 +141,8 @@ do_on(){
             return 1
         fi
         log "并发模式已开启（热点跟随 Wi-Fi 当前信道；固件不支持 5G 时自动回退 2.4GHz）"
-        result true "已开启：热点跟随 Wi-Fi 信道发信标（SSID=$SSID）"
+        # 措辞如实：此时只是指令已下发，hostapd 尚未发信标
+        result true "开启指令已下发，热点正在启动（将跟随 Wi-Fi 信道发信标）"
         ;;
     esac
     rm -f "$DISABLED"

@@ -263,3 +263,19 @@ msgstr "热点名称最长 32 个字符"
 #: plasmoid/contents/ui/main.qml:201
 msgid "Password must be 8-63 characters"
 msgstr "密码长度需 8-63 位"
+
+#: plasmoid/contents/ui/main.qml:135
+msgid "Turn-on accepted — waiting for the hotspot to beacon…"
+msgstr "开启指令已受理，正在等待热点发出信标…"
+
+#: plasmoid/contents/ui/FullRepresentation.qml:136
+msgid "Starting hotspot…"
+msgstr "正在开启热点…"
+
+#: plasmoid/contents/ui/main.qml:127
+msgid "Hotspot is up: %1  %2"
+msgstr "热点已开启：%1  %2"
+
+#: plasmoid/contents/ui/main.qml:145
+msgid "Hotspot did not come up within %1 s — check journalctl -u kde-hotspot"
+msgstr "热点在 %1 秒内未就绪 — 请查看 journalctl -u kde-hotspot"

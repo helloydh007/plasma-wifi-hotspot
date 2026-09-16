@@ -14,6 +14,11 @@ PlasmoidItem {
     property var deps: []
     property bool busy: false
     property string message: ""
+    // 后端已接受"开启"指令、但热点还没发出信标（要建 ap0、起 hostapd，
+    // 固件拒绝 5G 时还得等 Wi-Fi 降频重连）。此期间按钮保持"执行中"。
+    property bool awaitingHotspot: false
+    property string lastAction: ""
+    readonly property int upTimeoutSec: 90
 
     // ---------- 派生状态 ----------
     readonly property bool ready: typeof st.mode === "string"
@@ -121,10 +126,29 @@ PlasmoidItem {
                 try { root.st = JSON.parse(data.stdout) }
                 catch (e) { root.st = ({}) }
             }
+            // 热点真正发出信标了 → 结束"开启中"状态
+            if (root.awaitingHotspot && root.hotRunning) {
+                upTimer.stop()
+                root.awaitingHotspot = false
+                var where = (root.hotBand || "") + (root.hotCh ? " ch" + root.hotCh : "")
+                root.message = i18n("Hotspot is up: %1  %2", root.hotspotSsid, where)
+            }
             // 一次性查询用完即断；固定 source 留给 interval 轮询
             if (sourceName !== root.statusCmd) {
                 Qt.callLater(() => { statusSource.disconnectSource(sourceName) })
             }
+        }
+    }
+
+    // "开启"后等待热点就绪的超时兜底（Wi-Fi 掉线、固件异常等情况下不会永远卡住）
+    Timer {
+        id: upTimer
+        interval: root.upTimeoutSec * 1000
+        repeat: false
+        onTriggered: {
+            if (!root.awaitingHotspot) { return }
+            root.awaitingHotspot = false
+            root.message = i18n("Hotspot did not come up within %1 s — check journalctl -u kde-hotspot", root.upTimeoutSec)
         }
     }
 
@@ -150,6 +174,12 @@ PlasmoidItem {
                     || (ok ? i18n("Done") : i18n("see journalctl -u kde-hotspot"))
             }
             root.message = ok ? msg : i18n("Failed: %1", msg)
+            // 后端已受理"开启"：热点真正发信标前一直保持"开启中"
+            if (ok && root.lastAction === "on") {
+                root.awaitingHotspot = true
+                root.message = i18n("Turn-on accepted — waiting for the hotspot to beacon…")
+                upTimer.restart()
+            }
             Qt.callLater(() => { actionSource.disconnectSource(sourceName) })
             root.refreshStatus()
         }
@@ -183,8 +213,9 @@ PlasmoidItem {
         depsSource.connectSource(root.depsCmd + " #d" + root.oneShotSeq)
     }
     function runCtl(args) {
-        if (root.busy) { return }
+        if (root.busy || root.awaitingHotspot) { return }
         root.busy = true
+        root.lastAction = args
         root.message = i18n("Running: %1", args)
         actionSource.connectSource("pkexec " + root.ctl + " " + args)
     }
