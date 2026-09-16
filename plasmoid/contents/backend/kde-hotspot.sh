@@ -29,6 +29,8 @@ MODE=${MODE:-concurrent}
 STATE=/var/lib/kde-hotspot
 DISABLED="$STATE/disabled"
 RUN=/run/kde-hotspot
+# 策略路由优先级：必须高于代理软件（mihomo/Clash 用 9000 段）
+RULE_PRIO=${RULE_PRIO:-8990}
 IW=/usr/sbin/iw
 IPT=/usr/sbin/iptables
 NMCLI=/usr/bin/nmcli
@@ -59,6 +61,13 @@ ensure_ap0() {
 # NAT/转发规则。Docker 等软件重启时会清掉 FORWARD 链上的第三方规则并把策略
 # 设为 DROP，导致热点客户端断网；因此除起 AP 时设置外，阶段2 每轮循环补检一次。
 ensure_rules(){
+    # 代理软件（Clash Verge / mihomo 等 TUN 模式）会插入 9000 段的策略路由，
+    # 把流量导向其 TUN 并把默认路由屏蔽掉；热点客户端的转发包因此拿不到路由
+    # （内核 IpOutNoRoutes 静默丢弃）——表现是"连上热点但无法上网"。
+    # 给热点网段插一条更高优先级的规则，让它走主路由表直连上行（不经代理）。
+    if ! ip rule show 2>/dev/null | grep -qF "$AP_NET lookup main"; then
+        ip rule add from "$AP_NET" lookup main priority "$RULE_PRIO" 2>/dev/null || true
+    fi
     $IPT -t nat -C POSTROUTING -s "$AP_NET" -o "$STA_IF" -j MASQUERADE 2>/dev/null || \
         $IPT -t nat -I POSTROUTING -s "$AP_NET" -o "$STA_IF" -j MASQUERADE
     $IPT -C FORWARD -i "$AP_IF" -o "$STA_IF" -j ACCEPT 2>/dev/null || \

@@ -204,6 +204,28 @@ systemctl --user restart plasma-plasmashell
 - 只想卸插件、保留后端（继续用命令行 `pkexec …/kde-hotspot-ctl` 控制）的话，只执行第 4 步即可
 - polkit 规则删除后即恢复默认行为：任何 `pkexec` 调用重新弹密码
 
+## 常见问题
+
+### 手机连上了热点，但提示"无法上网"
+
+软件层面有两类常见原因，本项目都已自动处理，一般不需要手工介入：
+
+| 场景 | 现象与根因 | 自动处理 |
+|---|---|---|
+| **Docker 等软件重启** | 它们会把 `FORWARD` 链策略设为 DROP 并清掉链上的第三方规则 → 客户端能连上、拿到 IP，但所有流量被丢弃 | 监督脚本每约 3 秒补检转发/NAT 规则，缺了就补回 |
+| **代理软件 TUN 模式**（Clash Verge / mihomo / sing-box 等） | 它们插入 9000 段的策略路由，把流量导向自己的 TUN 并屏蔽默认路由 → 客户端的转发包"Network is unreachable"被内核静默丢弃（`IpOutNoRoutes` 增长） | 自动为热点网段插入更高优先级的规则（`from 10.233.33.0/24 lookup main`，优先级 8990，可用 `RULE_PRIO` 调整），让客户端流量绕开代理直连上行 |
+
+排查命令（都以 root 运行）：
+
+```bash
+nstat -az | grep -iE 'noroute|drop'        # 内核是否有"无路由/丢弃"计数
+ip rule show                               # 是否有代理插入的 9000 段策略路由
+ip route get 223.5.5.5 from 10.233.33.50 iif ap0   # 模拟客户端转发时的路由解析
+sudo tcpdump -ni ap0 host 10.233.33.50     # 客户端到底发了什么
+```
+
+如果客户端流量确实发出去了却收不到回包，问题在更上游（路由器/运营商），与热点无关。
+
 ## 参考与致谢
 
 - **[linux-wifi-hotspot](https://github.com/lakinduakash/linux-wifi-hotspot)**（lakinduakash）——本项目并发模式的信道原则即搬迁自它的 create_ap 后端："热点跟随 Wi-Fi 客户端当前信道、不改动 STA 的频段"。它提供的 [iwlwifi-lar-disable](https://github.com/lakinduakash/linux-wifi-hotspot/tree/master/util/iwlwifi-lar-disable) 工具（DKMS 给 iwlmvm 加回 `lar_disable=1`）也是在 Intel 网卡上解锁 5GHz 并发热点的参考方案

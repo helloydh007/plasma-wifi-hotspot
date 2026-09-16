@@ -10,3 +10,5 @@ PASS=change-me-12345 # 热点密码 8-63 字符（改成你的）
 MODE=concurrent      # concurrent=并发模式(保持 Wi-Fi) / normal=普通模式(断开 Wi-Fi)
 # FALLBACK_2G=yes    # 并发模式：固件拒绝 5GHz 时自动把 Wi-Fi 降到 2.4GHz 起热点
                      # （关闭热点时恢复频段偏好；设为 no 则不降频、热点保持关闭）
+# RULE_PRIO=8990     # 热点网段策略路由优先级（需高于代理软件 TUN 的 9000 段，
+                     # 让客户端流量绕过代理直连上行；一般不用改）

@@ -101,6 +101,28 @@ Action commands print one JSON line (`{"ok":true,"message":"…"}`) on stdout �
 
 See the Chinese README (卸载) for the full script; in short: stop/disable the three `kde-hotspot*` systemd units, remove the backend files (`/usr/local/sbin/kde-hotspot-ctl`, `/usr/local/sbin/kde-hotspot.sh`, the units, the polkit policy + rule, the NetworkManager `conf.d` file, `/etc/kde-hotspot`, `/var/lib/kde-hotspot`), clean up the `ap0` interface and the `kde-hotspot-normal` NM profile if present, then `kpackagetool6 -t Plasma/Applet -r org.kde.hotspot` and remove `~/.local/share/applications/org.kde.hotspot.desktop`.
 
+## Troubleshooting
+
+### Clients connect to the hotspot but report "no internet"
+
+Two common software causes, both handled automatically by this project:
+
+| Cause | Symptom / root cause | Automatic handling |
+|---|---|---|
+| **Docker (or similar) restarting** | It sets the `FORWARD` chain policy to DROP and flushes third-party rules from that chain → clients associate and get an IP, but every packet is dropped | The supervisor re-checks forwarding/NAT rules every ~3 s and restores them |
+| **A proxy in TUN mode** (Clash Verge / mihomo / sing-box…) | It installs policy-routing rules in the 9000 range, steering traffic into its TUN and suppressing the default route → forwarded client packets die as "Network is unreachable" (`IpOutNoRoutes` grows) | Adds a higher-priority rule for the hotspot subnet (`from 10.233.33.0/24 lookup main`, priority 8990, tunable via `RULE_PRIO`) so client traffic bypasses the proxy and goes out directly |
+
+Diagnostics (run as root):
+
+```bash
+nstat -az | grep -iE 'noroute|drop'                 # kernel drop counters
+ip rule show                                        # proxy policy-routing rules?
+ip route get 223.5.5.5 from 10.233.33.50 iif ap0     # route resolution for client traffic
+tcpdump -ni ap0 host 10.233.33.50                   # what the client actually sends
+```
+
+If client packets do leave but no replies come back, the problem is upstream (router/ISP), not the hotspot.
+
 ## Acknowledgments
 
 - **[linux-wifi-hotspot](https://github.com/lakinduakash/linux-wifi-hotspot)** — the channel principle of our concurrent mode ("hotspot follows the Wi-Fi client's current channel, never touching the client's band") was ported from its create_ap backend; its [iwlwifi-lar-disable](https://github.com/lakinduakash/linux-wifi-hotspot/tree/master/util/iwlwifi-lar-disable) utility is also the reference path to unlock 5 GHz concurrent hotspots on Intel NICs
