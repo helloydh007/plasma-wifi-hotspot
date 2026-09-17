@@ -23,7 +23,7 @@ See the hardware notes below for why concurrent mode falls back to 2.4 GHz on th
 ## Features
 
 - **Two hotspot modes** (see below): *concurrent* keeps your Wi-Fi client connected; *normal* turns the whole card into an AP
-- **Tray icon reflects state**: a hotspot icon while running; **the same icon with a red slash** (muted-icon style) when off/unavailable; hover shows status, band, channel and client count
+- **Tray icon reflects state**: the plain hotspot icon only while actually beaconing or starting; **the same icon with a red slash** (muted-icon style) when on standby, off, failed or the backend is unavailable; hover shows status, band, channel and client count
 - **Live status**: the icon follows external changes too (CLI toggles, the supervisor auto-pausing the hotspot when Wi-Fi roams) — polling every 5 s by default, adjustable 2–60 s
 - Panel controls: on/off, mode radio buttons, **start-at-boot** toggle, **dependency self-check** with copy-paste fix commands
 - **Change hotspot SSID/password** right in the panel; the running hotspot is restarted automatically so new values take effect; the **current password is viewable** (masked by default, eye button reveals it)

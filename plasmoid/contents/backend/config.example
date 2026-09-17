@@ -34,8 +34,8 @@ MODE=concurrent      # concurrent=并发模式(保持 Wi-Fi) / normal=普通模�
                      # （关闭热点时恢复频段偏好；设为 no 则不降频、热点保持关闭）
 # RULE_PRIO=8990     # 热点网段策略路由优先级（需高于代理软件 TUN 的 9000 段，
                      # 让客户端流量绕过代理直连上行；一般不用改）
-# COUNTRY=CN         # 监管域：hostapd country_code 与 iw reg set 都用它；
-                     # 留空则沿用当前 STA 的监管域（默认留空，不硬编任何国家）
+# COUNTRY=CN         # 监管域：必须是两位 ISO 国家代码；hostapd country_code 与 iw reg set 都用它。
+                     # 留空、00 或非法值 = 不指定，交给驱动当前的监管域（默认留空，不硬编任何国家）
 # NORMAL_CHANNEL=6   # 普通模式热点的 2.4GHz 信道
 # DHCP_START=50      # dnsmasq 地址池起（网段最后一段）
 # DHCP_END=150       # dnsmasq 地址池止

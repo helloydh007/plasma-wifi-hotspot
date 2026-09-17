@@ -93,6 +93,19 @@ fi
 if [ -z "$COUNTRY" ]; then
     COUNTRY=$($IW reg get 2>/dev/null | awk '/^country/{print $2; exit}' | tr -d ':')
 fi
+# iw 在内核尚未设置监管域时会输出 "country 00: DFS-UNSET"，而 00 不是合法的
+# ISO 3166 国家代码：原样写进 hostapd 会得到 "Invalid country_code '00'" →
+# "errors found in configuration file" → 每次都在读配置阶段退出，热点永远起不来
+# （2026-09-17 实机：开机自启进入待命，但 hostapd 从未发信标）。
+# 只接受两位字母；显式配置里的 00/非法值同样忽略，避免把坏值传给 hostapd。
+case "${COUNTRY:-}" in
+    ''|00) COUNTRY="" ;;
+    [A-Za-z][A-Za-z]) COUNTRY=$(printf '%s' "$COUNTRY" | tr '[:lower:]' '[:upper:]') ;;
+    *)
+        log "COUNTRY='${COUNTRY}' 不是两位字母的国家代码，已忽略（hostapd 用驱动当前设置）"
+        COUNTRY=""
+        ;;
+esac
 [ -n "$COUNTRY" ] || log "未取到监管域（可在 config 里显式设 COUNTRY=XX）；hostapd 用驱动当前设置"
 
 # 「保持关闭」标记只在本次开机内有效：上次开机留下的陈旧标记要清掉，
@@ -306,7 +319,7 @@ while :; do
         sleep 1; t=$((t+1))
     done
     if [ "$ok" -ne 1 ]; then
-        local_reason=$(grep -m1 -E 'Hardware does not support|Could not select hw_mode|Failed to set beacon|Interface initialization failed|Unable to setup interface|Channel is disabled' "$RUN/hostapd.log" 2>/dev/null)
+        local_reason=$(grep -m1 -E 'Hardware does not support|Could not select hw_mode|Failed to set beacon|Interface initialization failed|Unable to setup interface|Channel is disabled|Invalid country_code|errors found in configuration file|Failed to set up interface with' "$RUN/hostapd.log" 2>/dev/null)
         if [ "$loggedfail" != "$CH" ]; then
             if [ "$died" -eq 1 ]; then
                 log "热点未能在 ch$CH 发信标：hostapd 已退出（${local_reason:-无更多日志}）"

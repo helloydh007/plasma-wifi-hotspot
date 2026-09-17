@@ -96,8 +96,13 @@ case "${1:-}" in
     for a in "$@"; do [ "$a" = "add" ] && : > "$S/ap.exists"; done
     exit 0 ;;
   reg)
-    # 默认能读到监管域 CN；放 $MS/noreg 则模拟"读不到"
-    if [ "${2:-}" = "get" ] && [ ! -e "$S/noreg" ]; then printf 'country CN: DFS-ETSI\n'; fi
+    # 默认能读到监管域 CN；$MS/noreg = 读不到；$MS/reg00 = 内核尚未设置监管域
+    if [ "${2:-}" = "get" ]; then
+        if [ -e "$S/noreg" ]; then :
+        elif [ -e "$S/reg00" ]; then printf 'country 00: DFS-UNSET\n'
+        else printf 'country CN: DFS-ETSI\n'
+        fi
+    fi
     exit 0 ;;
 esac
 exit 0
@@ -135,6 +140,12 @@ while [ "$#" -gt 0 ]; do
 done
 ch=$(grep -m1 '^channel=' "$conf" 2>/dev/null | cut -d= -f2)
 printf 'hostapd-conf ch=%s mode=%s\n' "$ch" "$(grep -m1 '^hw_mode=' "$conf" 2>/dev/null | cut -d= -f2)" >> "$MOCKLOG"
+if grep -q '^country_code=00$' "$conf" 2>/dev/null; then
+    echo "Line 4: Invalid country_code '00'"
+    echo "errors found in configuration file '$conf'"
+    echo "Failed to set up interface with $conf"
+    exit 1
+fi
 echo $$ > "$S/hostapd.pid"
 if [ -e "$S/refuse.$ch" ] || [ -e "$S/refuse.all" ]; then
     echo "Configuration file: $conf"
@@ -369,6 +380,23 @@ cfg_base
 run_sup 3
 is "hostapd.conf 不写 country_code" "$(conf_line country_code)" ""
 contains "日志说明没取到监管域" "$(cat "$WORK/out.txt")" "未取到监管域"
+
+section "A2b. 监管域为 00（内核未设置）时不能写 country_code=00（hostapd 会拒绝启动）"
+reset
+: > "$MS/reg00"                    # iw reg get 输出 country 00: DFS-UNSET
+cfg_base
+run_snap 3
+is "不把 00 当成国家代码写进 hostapd.conf" "$(conf_line country_code)" ""
+is "热点真的发上信标（不再因 Invalid country_code 循环重试）" "$(snap ms/ap.channel)" "6"
+contains "日志说明没取到合法监管域" "$(cat "$WORK/out.txt")" "未取到监管域"
+
+section "A2c. config 显式写 COUNTRY=00 也要被当成未设置"
+reset
+cfg_base
+cfg_set COUNTRY 00               # 注意 hs_conf_set 要成对传键值
+run_snap 3
+is "显式 COUNTRY=00 不写 country_code" "$(conf_line country_code)" ""
+is "显式 COUNTRY=00 时热点仍能起来" "$(snap ms/ap.channel)" "6"
 
 section "A3. ap0 必须建在 STA 所在的那块无线电上（wiphy 解析）"
 reset

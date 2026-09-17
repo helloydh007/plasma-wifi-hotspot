@@ -2,6 +2,7 @@ import QtQuick
 import org.kde.plasma.plasmoid
 import org.kde.plasma.core as PlasmaCore
 import org.kde.plasma.plasma5support as P5Support
+import "state.js" as State
 
 PlasmoidItem {
     id: root
@@ -28,13 +29,6 @@ PlasmoidItem {
     readonly property bool isOff: st.disabled === true
     readonly property bool hotRunning: !!st.hotspot && st.hotspot.running === "yes"
     readonly property string mode: ready ? st.mode : "concurrent"
-    // 后端服务的真实状态串（ActiveState/SubState），由 ctl 的 status 给出。
-    // 不能只看"服务是不是 active"：Restart=on-failure 的服务在脚本崩溃后会处于
-    // activating/auto-restart，此时 systemctl is-active 依然返回 0 —— 面板若据此判断，
-    // 就会把"后端已经死了"显示成"已开启"（2026-09-16 实机故障）。
-    readonly property string backendState: (mode === "normal"
-        ? (st.normal_service_state || "") : (st.concurrent_service_state || ""))
-    readonly property bool backendAlive: backendState.indexOf("active/running") === 0
     readonly property string wifiSsid: (st.wifi && st.wifi.ssid) ? st.wifi.ssid : ""
     readonly property string wifiBand: (st.wifi && st.wifi.band) ? st.wifi.band : ""
     readonly property string wifiCh: (st.wifi && st.wifi.channel) ? String(st.wifi.channel) : ""
@@ -50,14 +44,8 @@ PlasmoidItem {
 
     // 状态机：以"真的在发信标"和"服务真实状态"为唯一来源。
     // 不能只看 disabled 标记——切模式、重启后自启等情况下标记并不代表"用户关了"。
-    readonly property string phase: !ready ? "unavailable"
-        : hotRunning ? "running"
-        : awaitingHotspot ? "starting"
-        : backendState.indexOf("failed") === 0 ? "failed"
-        : backendState.indexOf("activating") === 0 ? "starting"
-        : isOff ? "off"
-        : backendAlive ? "standby"
-        : "off"
+    // 判定实现放在 state.js（纯函数），这样同一份逻辑能被 Node 回归测试直接验证。
+    readonly property string phase: State.phaseOf(st, awaitingHotspot)
     readonly property string stateText: phase === "unavailable" ? i18n("Backend unavailable")
         : phase === "running" ? i18n("Running")
         : phase === "starting" ? i18n("Starting hotspot…")
@@ -67,9 +55,11 @@ PlasmoidItem {
     readonly property string bandText: hotRunning
         ? ((hotBand || "2.4G") + (hotCh ? " ch" + hotCh : ""))
         : (wifiBand ? (wifiBand + (wifiCh ? " ch" + wifiCh : "")) : "")
-    // 用 phase 而不是 isOff：否则会出现"图标画了关闭斜线、文字却在显示频段"的自相矛盾
+    // 用 phase 而不是 isOff：否则会出现"图标画了关闭斜线、文字却在显示频段"的自相矛盾。
+    // 待命同样没有热点可用（斜线会画出来），所以文字也不能再显示 Wi-Fi 频段。
     readonly property string labelText: (phase === "off" || phase === "unavailable" || phase === "failed")
         ? i18nc("Short tray label", "Off")
+        : phase === "standby" ? stateText
         : ((mode === "normal" ? "AP " : "") + bandText)
 
     readonly property var missingDeps: deps.filter(function (d) { return !d.ok })
@@ -113,9 +103,11 @@ PlasmoidItem {
     // 图标统一用热点图标；关闭/后端不可用时在右下角叠红色 ✕ 徽标
     // （不用 network-wireless-disconnected——那是"WiFi+叉"，容易和断网混淆）
     readonly property string baseIcon: "network-wireless-hotspot"
-    // 斜线 = "现在没有热点可用"：只有确实在发信标 / 正在启动 / 后端活着在待命才不画。
+    // 斜线 = "现在没有热点可用"：只有确实在发信标 / 正在启动才不画。
+    // 待命（后端服务活着但热点没发信标）也必须画——开机自启进入待命时，若这里
+    // 不画，用户会以为热点已开启（2026-09-17 用户反馈的实机 bug）。
     // 以前只看 isOff，点"开启"清掉标记后即使后端崩了图标也显示成已开启。
-    readonly property bool offBadge: phase === "unavailable" || phase === "off" || phase === "failed"
+    readonly property bool offBadge: State.offBadgeOf(phase)
     Plasmoid.icon: root.baseIcon
     Plasmoid.status: PlasmaCore.Types.ActiveStatus
     // 托盘里只显示图标，所以把频段/信道放进悬浮提示

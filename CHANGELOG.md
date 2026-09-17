@@ -6,6 +6,42 @@
 
 实机故障修复 + 一处设计纠正。
 
+### 修复（2026-09-17 实机：开机自启进入待命、热点没起来但图标不画斜线）
+
+- **待命态没有红色斜线**：`offBadge` 以前把 `standby`（后端 systemd 单元
+  `active/running`、但 hostapd 还没发出信标）和 `running` 一样排除在斜线之外。
+  用户开机后看到的是"服务在跑、热点没起来、图标却像开着"。现在斜线的唯一例外
+  只有 **running** 和 **starting**：待命同样画斜线，与 README 的"未发信标即有
+  斜线"以及面板按钮的"开启热点"文案一致。
+- **待命时托盘文字仍显示 Wi-Fi 频段**：斜线画出来后会与"5G ch40"的文案矛盾。
+  现在待命态显示 `Standby`（与悬浮提示/面板状态同一文案），只有运行中/启动中
+  才显示频段。
+- **`country 00` 被当成合法国家代码 → hostapd 永远起不来**：内核尚未设置监管域时
+  `iw reg get` 输出 `country 00: DFS-UNSET`，旧脚本原样写
+  `country_code=00` + `ieee80211d=1`，hostapd 在配置校验阶段直接退出：
+
+  ```text
+  Line 4: Invalid country_code '00'
+  2 errors found in configuration file
+  Failed to initialize interface
+  ```
+
+  旧监督脚本的“固件拒绝”正则只认频道相关错误，匹配不到这个配置错误，于是每 8 秒
+  重试一次、不降频、不报错，热点永远停在“待命”——这也正是用户看到的“热点没开”。
+  现在只接受两位字母的国家代码：`00`/非法值一律视为未设置（不写
+  `country_code`/`ieee80211d`），显式 `COUNTRY=00` 同样忽略并写日志；hostapd 失败
+  原因的正则也补上了 `Invalid country_code` / `errors found in configuration file`
+  / `Failed to set up interface with`，以后同类配置错误会直接进 journal。
+  实机验证：重启服务后约 10 秒 hostapd 在 5G 被 LAR 拒绝、自动回退 2.4G ch11，
+  `hotspot.running=yes`、`dhcp_active=yes`。
+- **状态判定抽成纯函数**：`plasmoid/contents/ui/state.js` 的 `phaseOf` /
+  `offBadgeOf` 取代 `main.qml` 里的内联逻辑，新增 `tests/test-ui-state.js`
+  用 Node 直接跑这 18 项断言（`tests/run-all.sh` 第 7 步；CI 缺 node 会失败）。
+  红-绿验证：把 `offBadgeOf` 恢复成旧判定时，"standby 必须画红色斜线"一项失败。
+- **监督脚本测试**：`tests/test-supervisor.sh` 新增 A2b/A2c 两项场景（共 +5 项断言），
+  mock 的 hostapd 也会像真机一样拒绝 `country_code=00`，确保“内核监管域为 00”
+  和“配置显式写 `COUNTRY=00`”都不会再写出坏配置。当前监督脚本测试 **60 项**。
+
 ### 修复（2026-09-16 实机：点"开启"失败、图标却显示已开启）
 
 - **监督脚本 87ms 就退出**：`kde-hotspot.sh` 在 `hs_conf_load` **之前**设的

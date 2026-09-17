@@ -53,7 +53,7 @@ MouseArea {
         anchors.centerIn: parent
         spacing: Kirigami.Units.smallSpacing
 
-        // 热点原图标 + 关闭时的红色斜线（仿托盘静音图标的样式，不变暗）
+        // 热点原图标 + 未发信标时的红色斜线（仿托盘静音图标的样式，不变暗）
         Item {
             implicitWidth: compact.iconSize
             implicitHeight: compact.iconSize

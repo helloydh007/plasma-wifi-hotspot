@@ -21,7 +21,7 @@ QQC2.ScrollView {
             Layout.margins: Kirigami.Units.smallSpacing
             spacing: Kirigami.Units.smallSpacing
 
-            // 与托盘一致：热点原图标，关闭时加红色斜线（仿静音图标）
+            // 与托盘一致：热点原图标，未发信标（含待命/关闭/失败）时加红色斜线（仿静音图标）
             Item {
                 implicitWidth: Kirigami.Units.iconSizes.medium
                 implicitHeight: Kirigami.Units.iconSizes.medium

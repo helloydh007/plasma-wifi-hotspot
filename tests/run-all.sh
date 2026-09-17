@@ -73,6 +73,20 @@ else
     echo "  skip 未安装 qmllint（CI 里会装，且找不到会直接失败）"
 fi
 
+step "7) UI 状态机测试（Node 直接跑 state.js 的纯函数）"
+if command -v node >/dev/null 2>&1; then
+    if node tests/test-ui-state.js; then
+        echo "  ok   UI 状态机通过"
+    else
+        bad "UI 状态机测试失败"
+    fi
+elif [ "${CI:-}" = "true" ]; then
+    # CI 里不让这道门静默消失（和 QML 检查同样的原则）
+    bad "CI 里找不到 node：UI 状态机测试不能跳过"
+else
+    echo "  skip 未安装 node"
+fi
+
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
     echo "全部检查通过"
