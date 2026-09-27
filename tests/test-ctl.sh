@@ -480,6 +480,59 @@ is "autostart off 成功" "$(jget ok)" "true"
 mock_has "systemctl disable kde-hotspot.service kde-hotspot-dhcp.service kde-hotspot-normal.service" \
     && ok "off 时三个单元都 disable" || no "off 时三个单元都 disable"
 
+section "F2. exit = 退出：停两套机制 + 关自启（不再接管，系统退回默认状态）"
+reset
+: > "$STATE/autostart-normal"
+: > "$MOCKSTATE/enabled.kde-hotspot.service"
+: > "$MOCKSTATE/enabled.kde-hotspot-dhcp.service"
+: > "$MOCKSTATE/enabled.kde-hotspot-normal.service"
+: > "$MOCKSTATE/ap.exists"
+printf '6\n' > "$MOCKSTATE/ap.channel"
+: > "$MOCKSTATE/active.kde-hotspot.service"
+: > "$MOCKSTATE/active.kde-hotspot-dhcp.service"
+run exit
+is "exit 成功" "$(jget ok)" "true"
+is "写了「保持关闭」标记（仅本次开机内有效）" "$([ -e "$STATE/disabled" ] && echo yes || echo no)" "yes"
+mock_has "systemctl stop kde-hotspot.service kde-hotspot-dhcp.service" \
+    && ok "停掉并发模式服务" || no "停掉并发模式服务"
+mock_has "ip link set ap0 down" && ok "把 ap0 放倒" || no "把 ap0 放倒"
+mock_has "iw dev ap0 del" && ok "删除虚拟接口" || no "删除虚拟接口"
+mock_has "systemctl disable kde-hotspot.service kde-hotspot-dhcp.service kde-hotspot-normal.service" \
+    && ok "开机自启一并关闭（三个单元）" || no "开机自启一并关闭（三个单元）" "$(grep disable "$MOCKLOG")"
+is "普通模式自启标记清掉" "$([ -e "$STATE/autostart-normal" ] && echo yes || echo no)" "no"
+contains "提示说明自启已禁用" "$(jget message)" "自启"
+
+section "F3. exit（普通模式）：删热点 profile + 还原被断开的 Wi-Fi + 关自启"
+reset
+cfg_set MODE normal
+: > "$MOCKSTATE/enabled.kde-hotspot-normal.service"
+printf 'uuid-home\n' > "$STATE/sta-conn.backup"
+# 热点运行中：AP profile 是激活的，原来的 HomeWifi 是我们断开后才空着的
+cat > "$MOCKSTATE/nm.conns" <<'EOD'
+uuid-ap|kde-hotspot-normal|802-11-wireless|wlan0|yes
+uuid-home|HomeWifi|802-11-wireless|wlan0|no
+EOD
+run exit
+is "普通模式 exit 成功" "$(jget ok)" "true"
+mock_has "nmcli connection down kde-hotspot-normal" && ok "停掉普通模式热点" || no "停掉普通模式热点"
+mock_has "nmcli connection delete kde-hotspot-normal" && ok "删除热点 profile" || no "删除热点 profile"
+mock_has "nmcli connection up uuid uuid-home" && ok "还原被断开的 Wi-Fi" || no "还原被断开的 Wi-Fi"
+mock_has "systemctl disable kde-hotspot.service kde-hotspot-dhcp.service kde-hotspot-normal.service" \
+    && ok "开机自启一并关闭" || no "开机自启一并关闭"
+is "Wi-Fi 备份文件已清理" "$([ -e "$STATE/sta-conn.backup" ] && echo yes || echo no)" "no"
+is "写了「保持关闭」标记" "$([ -e "$STATE/disabled" ] && echo yes || echo no)" "yes"
+
+section "F4. exit（并发模式降过频）：还原 Wi-Fi 频段偏好"
+reset
+# 监督脚本降 2.4G 时留下的频段备份（band.backup + 原连接名 band.conn）
+printf 'a\n' > "$STATE/band.backup"
+printf 'HomeWifi\n' > "$STATE/band.conn"
+run exit
+is "exit 成功（带频段备份）" "$(jget ok)" "true"
+mock_has "nmcli connection modify HomeWifi 802-11-wireless.band a" \
+    && ok "还原频段偏好" || no "还原频段偏好" "$(grep 'connection modify' "$MOCKLOG")"
+is "频段备份已清理" "$([ -e "$STATE/band.backup" ] && echo yes || echo no)" "no"
+
 section "G. mode 切换：写配置保住行尾注释 + 停两套机制 + 关自启"
 reset
 rm -f "$CONF"

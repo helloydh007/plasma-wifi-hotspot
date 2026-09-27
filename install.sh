@@ -1,9 +1,10 @@
 #!/bin/bash
-# 安装/更新：部署后端（root）+ 安装 Plasma 插件（用户级）+ 桌面入口
+# 安装/更新：部署后端（root）+ 安装 Plasma 插件（用户级）+ 桌面入口 + 桌面快捷方式
 #
-# 用法：bash install.sh [--no-restart]
+# 用法：bash install.sh [--no-restart] [--no-desktop-shortcut]
 #   --no-restart  即使插件内容有变化也不重启 plasmashell（注销重登后同样生效）
 #   --restart     强制重启 plasmashell
+#   --no-desktop-shortcut  不在桌面创建快捷方式（应用菜单入口照常安装）
 #
 # 关于 plasmashell 重启：plasmashell 会把插件 QML 读进内存，更新插件后必须重启
 # （或注销重登）才会加载新界面。但重启会重建所有小组件，只在内存里保存的开关会
@@ -18,12 +19,14 @@ HASHFILE="$HOME/.local/share/kde-hotspot/plasmoid.hash"
 UIHASHFILE="$HOME/.local/share/kde-hotspot/plasmoid.ui.hash"
 
 RESTART=auto
+DESKTOP_SHORTCUT=yes
 for a in "$@"; do
     case "$a" in
         --no-restart) RESTART=no ;;
         --restart)    RESTART=yes ;;
-        -h|--help)    sed -n '3,5p' "$0"; exit 0 ;;
-        *) echo "未知参数：$a（可用：--no-restart / --restart）" >&2; exit 2 ;;
+        --no-desktop-shortcut) DESKTOP_SHORTCUT=no ;;
+        -h|--help)    sed -n '3,6p' "$0"; exit 0 ;;
+        *) echo "未知参数：$a（可用：--no-restart / --restart / --no-desktop-shortcut）" >&2; exit 2 ;;
     esac
 done
 
@@ -104,6 +107,21 @@ fi
 echo
 echo "== 4) 安装桌面入口 =="
 install -m 644 "$SRC/backend/io.github.helloydh007.hotspot.desktop" "$HOME/.local/share/applications/"
+# 桌面快捷方式：默认在桌面创建一个图标（双击即可打开面板）。
+# 桌面目录按 xdg-user-dir 解析（中文系统通常是 ~/桌面）；不想创建用 --no-desktop-shortcut。
+if [ "$DESKTOP_SHORTCUT" = yes ]; then
+    DESKTOP_DIR="$(xdg-user-dir DESKTOP 2>/dev/null || true)"
+    [ -n "$DESKTOP_DIR" ] || DESKTOP_DIR="$HOME/Desktop"
+    if [ -d "$DESKTOP_DIR" ]; then
+        install -m 644 "$SRC/backend/io.github.helloydh007.hotspot.desktop" \
+            "$DESKTOP_DIR/io.github.helloydh007.hotspot.desktop"
+        echo "   已创建桌面快捷方式：$DESKTOP_DIR/io.github.helloydh007.hotspot.desktop"
+    else
+        echo "   未找到桌面目录（$DESKTOP_DIR），跳过桌面快捷方式（应用菜单入口不受影响）"
+    fi
+else
+    echo "   已按要求跳过桌面快捷方式"
+fi
 kbuildsycoca6 --noincremental >/dev/null 2>&1 || true
 
 echo
@@ -137,5 +155,8 @@ cat <<'TXT'
      里的 SSID/PASS，然后 systemctl restart kde-hotspot 让它生效）
   2) 把插件放进托盘：右键面板 → 系统托盘设置 → 条目 → 勾选“Wi-Fi 热点控制”
      或者直接把它拖到面板上（面板上会显示频段/信道文字）
-  3) 也可以从应用菜单/KRunner 搜“Wi-Fi 热点控制”打开独立窗口
+  3) 也可以从应用菜单/KRunner 搜“Wi-Fi 热点控制”打开独立窗口，
+     或者双击桌面上的快捷方式（若已创建）
+  4) 不想再用时：右键托盘图标 → “退出并关闭热点”，系统会退回默认状态
+     （停热点、关开机自启、还原 Wi-Fi）；图标本身可在托盘设置里移除
 TXT

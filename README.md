@@ -27,13 +27,16 @@ Windows 的这个能力带到 Linux：**不插网线、不断 Wi-Fi，照样开�
 - **状态自动跟随**：托盘图标/悬浮提示周期刷新（默认 5 秒，右键"配置"可调 2–60 秒），命令行开关、监管脚本自动暂停热点等外部变化也会如实反映
 - **双语界面**：跟随系统语言自动切换（KDE 标准 i18n：英文源串 + `po/zh_CN.po`，已编译进插件包）。改了界面文案后跑 `./build-translations.sh` 重新生成翻译即可。注：来自后端脚本的执行结果消息目前仍是中文
 - 面板里可切换模式、开关热点、**开机自启**开关
+- **右键退出**：托盘图标右键 → "退出并关闭热点（恢复系统默认）"——停掉两套热点机制、
+  还原 Wi-Fi 频段/连接副作用、**关闭开机自启**，系统退回默认状态（不再接管；详见"使用"）
 - **修改热点名称与密码**：面板里直接改（运行中的热点会自动重启使新值生效）
 - **状态如实反映**：面板状态以"真的在发信标"＋"systemd 单元的真实状态（ActiveState/SubState）"为准，分
   运行中 / 启动中 / 待命 / 已关闭 / **未运行（后端服务启动失败）** 五档——后端崩了不会再显示成"已开启"
   （`systemctl is-active` 对崩溃后自动重启中的单元也返回 0，只看它会把失败报成成功）
 - **依赖自检**：逐项检查 hostapd / dnsmasq / iw / iptables / 后端文件（含配置库）/ polkit 授权，缺失时给出可复制的修复命令
 - **免密码操作**：polkit 规则只授权执行一个控制脚本（见下"安全"）
-- 另有**桌面入口**：应用菜单/KRunner 搜"Wi-Fi 热点控制"可打开独立窗口
+- 另有**桌面入口**：应用菜单/KRunner 搜"Wi-Fi 热点控制"可打开独立窗口；
+  `install.sh` 默认还会在桌面创建一个快捷方式（`--no-desktop-shortcut` 可跳过），双击即开
 
 ## 两种模式
 
@@ -95,7 +98,7 @@ bash install.sh
 1. **部署后端**（pkexec，弹一次授权框）：控制脚本、systemd 单元、polkit 动作与规则、NM 的 `ap0` unmanaged 配置，以及**按 config 渲染的 `dnsmasq.conf`**
 2. 安装 **root 拥有的后端副本**到 `/usr/local/share/kde-hotspot/`（供插件内"一键修复"使用——不再以 root 执行用户可写目录里的脚本）
 3. 安装 **Plasma 插件**（用户级 `~/.local/share/plasma/plasmoids/`，不需要 root）
-4. 安装**桌面入口**（应用菜单/KRunner 可搜"Wi-Fi 热点控制"）
+4. 安装**桌面入口**（应用菜单/KRunner 可搜"Wi-Fi 热点控制"），并默认在**桌面创建快捷方式**（`--no-desktop-shortcut` 跳过）
 5. **刷新界面**：插件内容变化时才重启 plasmashell（见下"更新"一节）
 
 **首次安装会自动生成随机热点名称与密码**（形如 `kde-hotspot-4821` / 14 位随机串）并在部署结束时打印一次，
@@ -149,6 +152,23 @@ polkit 动作文件。升级后无需手工操作。
 - **切换模式**：停掉两套机制、写入新模式，**保留**你的开机自启设置（只是把它指向新模式的单元）；下一次"开启"按新模式来
 - **改名称/密码**：面板里直接改；运行中的热点会自动重启使新值生效（待命中的并发服务也会一起重启）
 - 右键托盘图标 → "配置 Wi-Fi 热点控制…"：设置显示标签、刷新间隔
+- 右键托盘图标 → **"退出并关闭热点（恢复系统默认）"**：见下文"退出（不再接管系统热点）"
+
+### 退出（不再接管系统热点）
+
+托盘图标的**右键菜单**里有"退出并关闭热点（恢复系统默认）"。它执行
+`kde-hotspot-ctl exit`，与"关闭热点"（`off`）的区别：
+
+| | 关闭热点（off） | **退出（exit）** |
+|---|---|---|
+| 停掉当前热点 | ✓ | ✓（两套机制无论哪套在跑都停掉，删 ap0、删普通模式 profile） |
+| 还原 Wi-Fi 频段偏好/被断开的连接 | ✓ | ✓ |
+| **开机自启** | **不动**（那是你的开关） | **一并关闭**——重启后热点不会再自己起来 |
+| 「保持关闭」标记 | ✓（仅本次开机内有效） | ✓（仅本次开机内有效） |
+
+也就是说：**off** 是"这一轮先停"，**exit** 是"放弃管理，系统退回默认状态"。退出后插件本体
+仍在托盘里（小组件无法把自己移除），但只做被动显示，不会再自动起热点；想连图标一起去掉，
+在托盘设置 → 条目里取消勾选，或右键托盘图标 → 移除小组件。哪天想再用了，面板里点"开启"即可。
 
 ### 桌面入口怎么打开
 
@@ -158,13 +178,27 @@ polkit 动作文件。升级后无需手工操作。
 2. 命令行：`gtk-launch io.github.helloydh007.hotspot`
 3. 直接跑：`plasmawindowed io.github.helloydh007.hotspot`
 
-打开的就是插件面板的独立窗口（和托盘弹出的是同一套界面）。想放到桌面或面板上做快捷方式：把这个 `.desktop` 文件复制到 `~/Desktop/` 或拖到面板即可。
+打开的就是插件面板的独立窗口（和托盘弹出的是同一套界面）。
+
+**桌面快捷方式**（在桌面上放一个可双击的图标）：
+
+- **自动**：`install.sh` 默认就做（桌面目录按 `xdg-user-dir DESKTOP` 解析，中文系统通常是 `~/桌面`）；
+  不想要就用 `bash install.sh --no-desktop-shortcut`，已创建的删掉桌面上的
+  `io.github.helloydh007.hotspot.desktop` 文件即可
+- **手动**：把应用菜单里的图标拖到桌面；或复制一份入口文件：
+
+  ```bash
+  cp ~/.local/share/applications/io.github.helloydh007.hotspot.desktop ~/Desktop/
+  ```
+
+- **面板快捷方式**：把图标从应用菜单拖到面板上即可（面板上也可直接放插件本体，见"安装"一节）
 
 命令行等价物（无需 sudo，polkit 已授权）：
 
 ```bash
 pkexec /usr/local/sbin/kde-hotspot-ctl status          # 状态 JSON
 pkexec /usr/local/sbin/kde-hotspot-ctl on|off          # 按当前模式开关
+pkexec /usr/local/sbin/kde-hotspot-ctl exit            # 退出：停热点 + 关自启，系统退回默认状态
 pkexec /usr/local/sbin/kde-hotspot-ctl mode concurrent|normal
 pkexec /usr/local/sbin/kde-hotspot-ctl autostart on|off
 pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> [<新密码>]
@@ -189,7 +223,7 @@ pkexec /usr/local/sbin/kde-hotspot-ctl cleanup       # 拆掉残留的 NAT/转�
 | 文件 | 作用 |
 |---|---|
 | `plasmoid/` | Plasma 6 插件包（`kpackagetool6 -t Plasma/Applet -i plasmoid`） |
-| `backend/kde-hotspot-ctl` | **唯一的特权入口**：on/off/mode/autostart/set-credentials/status/cleanup |
+| `backend/kde-hotspot-ctl` | **唯一的特权入口**：on/off/exit/mode/autostart/set-credentials/status/cleanup |
 | `backend/kde-hotspot-config.sh` | 配置读写库（解析 / 校验 / 原子写回；纯数据格式，绝不被 `source`）|
 | `backend/kde-hotspot.sh` | 并发模式监督循环：跟随 Wi-Fi 信道起停 hostapd；遵守"保持关闭"标记 |
 | `backend/kde-hotspot{,-dhcp,-normal}.service` | systemd 单元（后者是普通模式的开机自启） |
@@ -336,13 +370,13 @@ sudo systemctl restart kde-hotspot kde-hotspot-dhcp
 bash tests/run-all.sh     # 语法 + shellcheck + 单测 + QML 语法；本地与 CI 跑的是同一套
 ```
 
-- `tests/test-config.sh`（**79 项**）：配置库单测——解析、引号/注释、注入、校验、原子写回、重复键语义、
+- `tests/test-config.sh`（**85 项**）：配置库单测——解析、引号/注释、注入、校验、原子写回、重复键语义、
   可选键默认值、"运行时标记是否属于本次开机"
-- `tests/test-ctl.sh`（**128 项**）：控制脚本端到端——把 ctl 里的绝对路径 sed 到临时目录，用 mock 的
+- `tests/test-ctl.sh`（**170 项**）：控制脚本端到端——把 ctl 里的绝对路径 sed 到临时目录，用 mock 的
   `iw`/`nmcli`/`systemctl`/`ip`/`iptables` 跑出真实的命令序列，再断言 JSON 结果、状态/配置文件的变化和实际发出的系统调用。
-  覆盖 on/off/mode/autostart/set-credentials/status、`--pass-file` 的 5 种拒绝场景、
-  "崩溃-自动重启"必须报失败、"关闭热点不动开机自启"等
-- `tests/test-supervisor.sh`（**46 项**）：监督脚本（`kde-hotspot.sh`）端到端——用 mock 的
+  覆盖 on/off/exit/mode/autostart/set-credentials/status、`--pass-file` 的 5 种拒绝场景、
+  "崩溃-自动重启"必须报失败、"关闭热点不动开机自启"、"退出要关自启并还原 Wi-Fi"等
+- `tests/test-supervisor.sh`（**60 项**）：监督脚本（`kde-hotspot.sh`）端到端——用 mock 的
   hostapd/iw/ip/iptables/sysctl/nmcli 跑，覆盖"配置缺可选键不能崩"、5G 被拒自动回退 2.4G、
   `FALLBACK_2G=no` 时不动用户 Wi-Fi、非拒绝类失败不降频、DFS 延长等待、陈旧"保持关闭"标记被忽略等
 - 三个套件都**不需要 root、不需要网卡、不碰真实网络**（mock + 临时目录），所以 CI 里也能跑

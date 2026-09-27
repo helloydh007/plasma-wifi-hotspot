@@ -5,6 +5,7 @@
 # 用法:
 #   kde-hotspot-ctl on            按当前模式开启热点
 #   kde-hotspot-ctl off           关闭热点（只停当前；不改「开机自启」设置）
+#   kde-hotspot-ctl exit          退出：停热点 + 关自启 + 还原 Wi-Fi，系统退回默认状态
 #   kde-hotspot-ctl mode M        切换模式: concurrent | normal
 #   kde-hotspot-ctl autostart on|off
 #   kde-hotspot-ctl set-credentials SSID [PASS|-] [--pass-file FILE]
@@ -476,6 +477,25 @@ do_off(){
     result true "热点已关闭（开机自启设置未改动；重启后是否自动开启由它决定）"
 }
 
+# ---------- 退出（不再接管系统热点）----------
+# 与 off 的区别：off 是"只停当前这一轮"，**刻意不碰**开机自启（那是用户的开关，
+# 关热点不该偷偷改设置）；exit 是"放弃管理"——把系统退回默认状态：
+#   ① 两套机制全停（不区分当前模式，残留的哪套都要拆掉）
+#   ② 还原对用户 Wi-Fi 的副作用（恢复被断开的连接 / 频段偏好）
+#   ③ 开机自启一并关掉——否则重启后热点又自己起来，等于还在接管
+#   ④ 写「保持关闭」标记，这一轮里服务不会被别的东西拉起来
+do_exit(){
+    touch_public "$DISABLED"
+    stop_normal
+    stop_concurrent
+    restore_sta_conn
+    restore_band
+    autostart_off
+    clear_runtime_marks
+    log "已退出：热点已停止、开机自启已禁用，系统已恢复默认状态"
+    result true "已退出：热点已停止、开机自启已禁用，系统已恢复默认状态"
+}
+
 do_mode(){
     local m="${1:-}"
     case "$m" in concurrent|normal) ;; *) log "模式必须是 concurrent 或 normal"; return 2 ;; esac
@@ -781,6 +801,7 @@ do_status(){
 case "${1:-}" in
   on)        do_on ;;
   off)       do_off ;;
+  exit)      do_exit ;;
   mode)      do_mode "${2:-}" ;;
   autostart) do_autostart "${2:-}" ;;
   set-credentials) shift; set_credentials "$@" ;;
@@ -791,6 +812,7 @@ case "${1:-}" in
 用法: kde-hotspot-ctl <命令>
   on                     按当前模式开启热点
   off                    关闭热点（只停当前，不动开机自启）
+  exit                   退出：停两套机制 + 关开机自启 + 还原 Wi-Fi（系统退回默认状态）
   mode concurrent|normal 切换模式（会先停掉两套机制）
   autostart on|off       开机自启
   set-credentials SSID [--pass-file FILE | -]   改热点名称/密码

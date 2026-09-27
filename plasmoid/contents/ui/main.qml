@@ -110,6 +110,16 @@ PlasmoidItem {
     readonly property bool offBadge: State.offBadgeOf(phase)
     Plasmoid.icon: root.baseIcon
     Plasmoid.status: PlasmaCore.Types.ActiveStatus
+    // 右键菜单：退出 = 停热点 + 关开机自启 + 还原 Wi-Fi，系统退回默认状态（不再接管）。
+    // 小组件本体无法把自己从托盘移除（移除走 Plasma 自带菜单），「退出」负责的是
+    // 系统侧状态；图标留在这里只做被动显示，不会再自动起热点。
+    Plasmoid.contextualActions: [
+        PlasmaCore.Action {
+            text: i18n("Quit and turn off the hotspot")
+            icon.name: "application-exit"
+            onTriggered: root.runCtl("exit")
+        }
+    ]
     // 托盘里只显示图标，所以把频段/信道放进悬浮提示
     toolTipMainText: i18n("Wi-Fi hotspot: %1", stateText)
     toolTipSubText: hotRunning
@@ -259,8 +269,8 @@ PlasmoidItem {
                 root.message = i18n("Turn-on accepted — waiting for the hotspot to beacon…")
                 upTimer.restart()
             }
-            // 关闭指令结束"开启中"状态（用户在等待期间点了取消）
-            if (ok && root.lastAction === "off" && root.awaitingHotspot) {
+            // 关闭/退出指令结束"开启中"状态（用户在等待期间点了取消或退出）
+            if (ok && (root.lastAction === "off" || root.lastAction === "exit") && root.awaitingHotspot) {
                 upTimer.stop()
                 root.awaitingHotspot = false
             }
@@ -333,8 +343,8 @@ PlasmoidItem {
     }
     function runCtl(args) {
         if (root.busy) { return }
-        // "开启中"期间只放行"关闭"——否则用户要等满 90 秒超时才能取消
-        if (root.awaitingHotspot && args !== "off") { return }
+        // "开启中"期间只放行"关闭"和"退出"——否则用户要等满 90 秒超时才能取消
+        if (root.awaitingHotspot && args !== "off" && args !== "exit") { return }
         root.busy = true
         actionWatchdog.restart()
         root.lastAction = args

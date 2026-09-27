@@ -26,10 +26,11 @@ See the hardware notes below for why concurrent mode falls back to 2.4 GHz on th
 - **Tray icon reflects state**: the plain hotspot icon only while actually beaconing or starting; **the same icon with a red slash** (muted-icon style) when on standby, off, failed or the backend is unavailable; hover shows status, band, channel and client count
 - **Live status**: the icon follows external changes too (CLI toggles, the supervisor auto-pausing the hotspot when Wi-Fi roams) — polling every 5 s by default, adjustable 2–60 s
 - Panel controls: on/off, mode radio buttons, **start-at-boot** toggle, **dependency self-check** with copy-paste fix commands
+- **Right-click → Quit**: the tray icon's context menu has "Quit and turn off the hotspot" — it stops both hotspot mechanisms, restores the Wi-Fi side effects and **disables autostart**, returning the system to its default state (the backend no longer manages anything; see Usage below)
 - **Change hotspot SSID/password** right in the panel; the running hotspot is restarted automatically so new values take effect; the **current password is viewable** (masked by default, eye button reveals it)
 - **Password-free operation**: a polkit rule authorizes exactly one control script (see Security)
 - **Bilingual UI follows the system language** (KDE-standard i18n: English source strings, `zh_CN` catalog compiled into the package; regenerate with `./build-translations.sh`. Backend result messages are Chinese-only for now)
-- Also installable as a **desktop entry** (app menu / KRunner: "Wi-Fi Hotspot Control") opening the same UI in a standalone window
+- Also installable as a **desktop entry** (app menu / KRunner: "Wi-Fi Hotspot Control") opening the same UI in a standalone window; `install.sh` also creates a double-clickable **desktop shortcut** by default (`--no-desktop-shortcut` skips it)
 
 ## The two modes
 
@@ -65,7 +66,7 @@ git clone <this repo> && cd plasma-wifi-hotspot
 bash install.sh
 ```
 
-`install.sh` does four things: deploys the backend via pkexec (one auth prompt), installs the plasmoid user-level, installs a desktop entry, and refreshes the UI (restarting plasmashell only if the applet content changed — see Update below). Then:
+`install.sh` does five things: deploys the backend via pkexec (one auth prompt), installs a root-owned copy of the backend, installs the plasmoid user-level, installs a desktop entry **plus a double-clickable desktop shortcut** (skip with `--no-desktop-shortcut`), and refreshes the UI (restarting plasmashell only if the applet content changed — see Update below). Then:
 
 1. Edit `/etc/kde-hotspot/config` (mode 600) and set your `SSID` / `PASS`. **The backend refuses to start the hotspot with missing credentials** — no default passwords.
 2. Add the applet to the system tray: right-click the panel → Edit System Tray → Entries → enable "Wi-Fi 热点控制", or drag it onto the panel.
@@ -96,6 +97,9 @@ Semantics worth knowing (they are symmetric on purpose):
   `off` stops both mechanisms, restores the Wi-Fi band preference and writes a "stay off" marker that is valid
   **for the current boot only**. So nothing brings the hotspot back during this session, while a reboot still
   honours whatever the **Autostart** switch says. If you want it to stay off across reboots too, turn Autostart off.
+- **Quit hands the system back to its defaults** (tray right-click → "Quit and turn off the hotspot", or `exit`):
+  both mechanisms are stopped, Wi-Fi side effects restored, **and autostart is disabled** — so nothing manages
+  or revives the hotspot afterwards, unlike `off` which leaves your Autostart switch alone.
 - **Autostart** only decides whether the hotspot starts at boot: it enables/disables the systemd units and never
   starts or stops the running hotspot itself.
 - **Switching mode** stops both mechanisms, writes the new mode and **keeps your autostart setting** (it just
@@ -109,6 +113,7 @@ Semantics worth knowing (they are symmetric on purpose):
 ```bash
 pkexec /usr/local/sbin/kde-hotspot-ctl status          # status JSON (includes current SSID/password)
 pkexec /usr/local/sbin/kde-hotspot-ctl on|off          # toggle in the current mode
+pkexec /usr/local/sbin/kde-hotspot-ctl exit            # quit: stop hotspot + disable autostart, back to system defaults
 pkexec /usr/local/sbin/kde-hotspot-ctl mode concurrent|normal
 pkexec /usr/local/sbin/kde-hotspot-ctl autostart on|off
 pkexec /usr/local/sbin/kde-hotspot-ctl set-credentials <SSID> [<new password>]
@@ -198,8 +203,8 @@ bash tests/run-all.sh     # syntax + shellcheck + unit tests + QML syntax; same 
 ```
 
 - `tests/test-config.sh` — config-library unit tests (parsing, quoting/comments, injection, validation, atomic writes, defaults, runtime-marker boot check; 85 assertions)
-- `tests/test-supervisor.sh` — **end-to-end** tests of the root supervisor (55 assertions, mock hostapd/iw/ip/iptables/nmcli)
-- `tests/test-ctl.sh` — **end-to-end** tests of the control script (152 assertions): it `sed`s the absolute-path
+- `tests/test-supervisor.sh` — **end-to-end** tests of the root supervisor (60 assertions, mock hostapd/iw/ip/iptables/nmcli)
+- `tests/test-ctl.sh` — **end-to-end** tests of the control script (170 assertions): it `sed`s the absolute-path
   declarations of the ctl into a temp dir and puts mock `iw`/`nmcli`/`systemctl`/`ip`/`iptables` on `PATH`, so real command
   sequences run and the assertions cover the emitted JSON, the resulting state/config files and the syscalls the script made.
   No root, no NIC, no real network — which is why it runs in CI.
